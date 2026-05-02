@@ -3,7 +3,7 @@ import { extractAll, type ExtractionFile } from '../ai/extraction';
 import { getDoc, setDoc } from '../lib/firebase';
 import { asyncHandler, createHttpError, getRouteParam } from '../lib/http';
 import { createLogger } from '../lib/logger';
-import type { Repo } from '../types';
+import type { FileTreeNode, Repo } from '../types';
 
 const router = Router();
 const logger = createLogger('routes-ai');
@@ -44,6 +44,44 @@ function collectTreePaths(node: unknown, output: string[]): void {
   }
 }
 
+function normalizeFileTreeNode(value: unknown): FileTreeNode | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const name = typeof value.name === 'string' ? value.name : null;
+  const path = typeof value.path === 'string' ? value.path : null;
+  const type = value.type === 'file' || value.type === 'directory' ? value.type : null;
+
+  if (!name || path === null || !type) {
+    return null;
+  }
+
+  const children = Array.isArray(value.children)
+    ? value.children
+        .map((child) => normalizeFileTreeNode(child))
+        .filter((child): child is FileTreeNode => Boolean(child))
+    : undefined;
+
+  return {
+    name,
+    path,
+    type,
+    children,
+    extension: typeof value.extension === 'string' ? value.extension : undefined,
+    size: typeof value.size === 'number' ? value.size : undefined,
+    supported: typeof value.supported === 'boolean' ? value.supported : undefined,
+  };
+}
+
+function getStructuredFileTree(body: unknown): FileTreeNode | null {
+  if (!isRecord(body) || !isRecord(body.fileTree)) {
+    return null;
+  }
+
+  return normalizeFileTreeNode(body.fileTree);
+}
+
 function getRequestFileTree(body: unknown, files: ExtractionFile[]): string {
   if (!isRecord(body)) {
     return files.map((file) => file.path).join('\n');
@@ -77,6 +115,7 @@ router.post(
 
     const files = getRequestFiles(req.body);
     const fileTree = getRequestFileTree(req.body, files);
+    const structuredFileTree = getStructuredFileTree(req.body);
 
     logger.info('ai_extraction_requested', {
       repoId: repo.repoId,
@@ -85,7 +124,13 @@ router.post(
       fileTreeLineCount: fileTree.split('\n').filter(Boolean).length,
     });
 
-    await setDoc('repos', repo.repoId, { status: 'analyzing' satisfies Repo['status'] }, { merge: true });
+    const repoUpdate: Partial<Repo> = { status: 'analyzing' };
+
+    if (structuredFileTree) {
+      repoUpdate.fileTree = structuredFileTree;
+    }
+
+    await setDoc('repos', repo.repoId, repoUpdate, { merge: true });
 
     void extractAll(repo.repoId, repo.name, fileTree, files)
       .then((result) => {

@@ -73,6 +73,7 @@ router.post(
       githubUrl: githubUrl.trim(),
       status: 'cloning',
       runnability: null,
+      fileTree: null,
       analysis: null,
       aiReadme: null,
       portalUrl: null,
