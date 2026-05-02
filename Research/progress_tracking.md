@@ -9,14 +9,16 @@ This file tracks how much of the Engineer A and Engineer B backend work is done,
 ### Current high-level status
 
 - Engineer A: core backend is largely implemented and locally verified.
-- Engineer B: extraction pipeline, prompts, and AI routes are implemented; local fallback flow is verified.
-- Main remaining blocker for full end-to-end AI validation: `OPENROUTER_API_KEY` is blank in local `server/.env`.
+- Engineer B: extraction pipeline, prompts, AI routes, and live OpenRouter flow are implemented and locally verified.
+- Main remaining blocker for full product validation: run the real BrowserPod/frontend add-repo flow on one or two actual GitHub repos.
 
 ### Verified today
 
 - Backend `npm run build` passes.
 - Frontend `npm run build` passes.
 - Backend `npm run smoke` passes against live Firestore.
+- Backend `npm run smoke` passes against live Firestore and live OpenRouter when the server is running on Node 22.
+- Repo chat and workspace chat return live OpenRouter responses.
 - `GET /api/ai/extract/:repoId` now returns pending or partial data instead of a cache-miss 404.
 - BrowserPod add-repo flow is aligned with the backend extraction contract.
 
@@ -33,15 +35,15 @@ Reference: `Research/plan.md` and `Research/engineerA_spec.md`
 | A3 | Workspace CRUD endpoints | Verified | Covered by smoke test |
 | A4 | Repo CRUD endpoints | Verified | Covered by smoke test |
 | A5 | Run/stop state endpoints | Verified | Covered by smoke test |
-| A6 | Chat message CRUD and history retrieval | Implemented | Present in `server/src/routes/chat.ts`; not fully exercised with live AI replies yet |
-| A7 | Workspace chat endpoint | Implemented | Depends on live OpenRouter key for full response validation |
-| A8 | Repo chat endpoint | Implemented | Depends on live OpenRouter key for full response validation |
-| A9 | Deploy + test all endpoints | Partial | Firestore rules/indexes deployed; CRUD, extraction, run/stop verified locally; chat still needs live OpenRouter validation |
+| A6 | Chat message CRUD and history retrieval | Verified | Chat persistence and live replies validated locally |
+| A7 | Workspace chat endpoint | Verified | Live OpenRouter response validated locally |
+| A8 | Repo chat endpoint | Verified | Live OpenRouter response validated locally |
+| A9 | Deploy + test all endpoints | Partial | Firestore rules/indexes deployed; CRUD, extraction, run/stop, and chat verified locally; deployment still pending |
 
 ### Engineer A summary
 
 - Implemented: 9/9 tasks
-- Locally verified: 6/9 tasks fully verified, 2 implemented but not AI-validated, 1 partial
+- Locally verified: 8/9 tasks fully verified, 1 partial
 - Practical status: backend infrastructure is in good shape and usable for frontend integration now
 
 ---
@@ -59,13 +61,13 @@ Reference: `Research/plan.md`, `Research/engineerB_spec.md`, and `Research/engin
 | B5 | AI README generation prompt | Implemented | `server/src/ai/prompts/aiReadme.ts` |
 | B6 | `POST /api/ai/extract/:repoId` orchestration endpoint | Verified | Background extraction flow implemented and smoke-tested |
 | B7 | `GET /api/ai/extract/:repoId` cached results endpoint | Verified | Now returns pending-safe payloads instead of 404 for existing repos |
-| B8 | Test extraction pipeline with real repos | Partial | Smoke test and BrowserPod integration path verified; live OpenRouter-backed extraction still needs API key and real repo validation |
+| B8 | Test extraction pipeline with real repos | Partial | Live OpenRouter-backed smoke extraction passes; still needs BrowserPod/frontend validation with real GitHub repos |
 
 ### Engineer B summary
 
 - Implemented: 8/8 tasks
-- Locally verified: 2/8 directly verified at route level, remaining prompt/client pieces implemented and wired in, with full live AI validation pending
-- Practical status: the extraction stack is in place and works locally through the fallback path; OpenRouter-backed validation is the next step
+- Locally verified: 7/8 verified locally, with final real-repo BrowserPod validation pending
+- Practical status: the extraction stack is in place and works with live OpenRouter in local smoke tests
 
 ---
 
@@ -84,7 +86,7 @@ Reference: `Research/engineerB_spec.md`
 | 7 | Build extraction orchestrator | Done |
 | 8 | Build AI routes | Done |
 | 9 | Integration testing | Partial |
-| 10 | Coordinate with Engineer A | Partial |
+| 10 | Coordinate with Engineer A | Done |
 
 ---
 
@@ -101,15 +103,15 @@ Reference: `Research/engineerB_spec.md`
 
 ### Highest priority
 
-1. Add a real `OPENROUTER_API_KEY` to local `server/.env`.
-2. Validate repo chat and workspace chat with live model responses.
-3. Validate extraction on one or two real GitHub repos through the BrowserPod add-repo flow.
+1. Validate extraction on one or two real GitHub repos through the BrowserPod add-repo flow.
+2. Review generated AI README quality and tune prompts if needed.
+3. Rotate exposed local service/API keys before any public deployment.
 
 ### Nice to have
 
-1. Add a dedicated smoke test for the chat endpoints once OpenRouter credentials are available.
+1. Add a reusable scripted smoke test for the chat endpoints.
 2. Add a documented real-repo test checklist for BrowserPod clone, extraction readiness, and AI README generation.
-3. Update handoff docs again after live OpenRouter validation is complete.
+3. Update handoff docs again after BrowserPod real-repo validation is complete.
 
 ---
 
@@ -117,4 +119,5 @@ Reference: `Research/engineerB_spec.md`
 
 - Engineer A work is mostly done and mostly verified.
 - Engineer B implementation is effectively in place, including the prompt files and extraction orchestration.
-- The main gap is not missing code anymore; it is live AI validation with a real OpenRouter key.
+- Live OpenRouter chat and smoke extraction are validated locally.
+- The main gap is real frontend/BrowserPod validation with actual GitHub repos.

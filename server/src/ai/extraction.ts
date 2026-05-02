@@ -1,5 +1,5 @@
 import { config } from '../config';
-import { setDoc } from '../lib/firebase';
+import { getDoc, setDoc } from '../lib/firebase';
 import type { ExtractionResult, FunctionDoc, Overview, RunnabilityResult, TechStack } from '../types';
 import { callOpenRouter, callOpenRouterStructured } from './openrouter';
 import { buildAiReadmePrompt } from './prompts/aiReadme';
@@ -348,6 +348,10 @@ function hasOpenRouterKey(): boolean {
   return config.openrouter.apiKey.trim().length > 0;
 }
 
+async function repoStillExists(repoId: string): Promise<boolean> {
+  return Boolean(await getDoc('repos', repoId));
+}
+
 export async function extractAll(
   repoId: string,
   repoName: string,
@@ -403,6 +407,12 @@ export async function extractAll(
   }
 
   const analysis: ExtractionResult = { techStack, overview, functions, dependencies };
+
+  if (!(await repoStillExists(repoId))) {
+    console.log(`[Extraction] Repo ${repoId} was deleted before partial results were saved; skipping writes.`);
+    return { analysis, aiReadme, runnability };
+  }
+
   await setDoc('repos', repoId, { analysis, runnability }, { merge: true });
 
   if (hasOpenRouterKey()) {
@@ -415,6 +425,11 @@ export async function extractAll(
     } catch (error) {
       console.error('[Extraction] AI README generation failed:', error);
     }
+  }
+
+  if (!(await repoStillExists(repoId))) {
+    console.log(`[Extraction] Repo ${repoId} was deleted before final results were saved; skipping writes.`);
+    return { analysis, aiReadme, runnability };
   }
 
   await setDoc(

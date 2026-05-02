@@ -20,7 +20,7 @@ function delay(ms) {
 }
 
 async function waitForExtraction(repoId) {
-  for (let attempt = 1; attempt <= 30; attempt += 1) {
+  for (let attempt = 1; attempt <= 180; attempt += 1) {
     const repo = await request(`/repos/${repoId}`);
     const extraction = await request(`/ai/extract/${repoId}`);
 
@@ -32,7 +32,7 @@ async function waitForExtraction(repoId) {
       return { repo, extraction };
     }
 
-    await delay(500);
+    await delay(1000);
   }
 
   throw new Error(`Timed out waiting for extraction for repo ${repoId}`);
