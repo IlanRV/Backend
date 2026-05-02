@@ -19,25 +19,26 @@ function messageFromDoc(document: FirebaseFirestore.QueryDocumentSnapshot): Chat
   };
 }
 
+function byTimestamp(left: ChatMessage, right: ChatMessage): number {
+  return left.timestamp.localeCompare(right.timestamp);
+}
+
 async function getMessages(scopeType: ChatMessage['scopeType'], scopeId: string): Promise<ChatMessage[]> {
   const snapshot = await getCollection('chat_messages')
     .where('scopeType', '==', scopeType)
     .where('scopeId', '==', scopeId)
-    .orderBy('timestamp', 'asc')
     .get();
 
-  return snapshot.docs.map(messageFromDoc);
+  return snapshot.docs.map(messageFromDoc).sort(byTimestamp);
 }
 
 async function getLastMessages(scopeType: ChatMessage['scopeType'], scopeId: string): Promise<ChatMessage[]> {
   const snapshot = await getCollection('chat_messages')
     .where('scopeType', '==', scopeType)
     .where('scopeId', '==', scopeId)
-    .orderBy('timestamp', 'desc')
-    .limit(20)
     .get();
 
-  return snapshot.docs.map(messageFromDoc).reverse();
+  return snapshot.docs.map(messageFromDoc).sort(byTimestamp).slice(-20);
 }
 
 async function saveChatMessage(message: Omit<ChatMessage, 'messageId' | 'timestamp'>): Promise<ChatMessage> {
@@ -120,12 +121,11 @@ router.post(
 
     const repoSnapshot = await getCollection('repos')
       .where('workspaceId', '==', workspace.workspaceId)
-      .orderBy('createdAt', 'asc')
       .get();
     const repos = repoSnapshot.docs.map((document) => ({
       ...(document.data() as Repo),
       repoId: document.id,
-    }));
+    })).sort((left, right) => left.createdAt.localeCompare(right.createdAt));
     const history = await getLastMessages('workspace', workspace.workspaceId);
     const systemPrompt = buildWorkspaceChatSystemPrompt(workspace, repos, history);
     const reply = await callOpenRouter(message.trim(), systemPrompt);

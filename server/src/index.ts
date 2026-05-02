@@ -10,7 +10,7 @@ import workspaceRoutes from './routes/workspaces';
 const app = express();
 
 app.use(cors({ origin: config.corsOrigin }));
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '35mb' }));
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

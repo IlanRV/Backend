@@ -20,8 +20,13 @@ function isNonEmptyString(value: unknown): value is string {
 function repoFromDoc(document: FirebaseFirestore.QueryDocumentSnapshot): Repo {
   return {
     ...(document.data() as Repo),
+    id: document.id,
     repoId: document.id,
-  };
+  } as Repo & { id: string };
+}
+
+function byCreatedAt(left: { createdAt: string }, right: { createdAt: string }): number {
+  return left.createdAt.localeCompare(right.createdAt);
 }
 
 router.get(
@@ -33,6 +38,7 @@ router.get(
       workspaceSnapshot.docs.map(async (document) => {
         const workspace = {
           ...(document.data() as Workspace),
+          id: document.id,
           workspaceId: document.id,
         };
         const repoSnapshot = await getCollection('repos')
@@ -68,7 +74,7 @@ router.post(
 
     await setDoc('workspaces', workspace.workspaceId, workspace);
 
-    res.status(201).json({ ...workspace, repoCount: 0 });
+    res.status(201).json({ ...workspace, id: workspace.workspaceId, repoCount: 0 });
   })
 );
 
@@ -84,9 +90,8 @@ router.get(
 
     const repoSnapshot = await getCollection('repos')
       .where('workspaceId', '==', workspace.workspaceId)
-      .orderBy('createdAt', 'asc')
       .get();
-    const repos = repoSnapshot.docs.map(repoFromDoc);
+    const repos = repoSnapshot.docs.map(repoFromDoc).sort(byCreatedAt);
 
     res.json({
       ...workspace,

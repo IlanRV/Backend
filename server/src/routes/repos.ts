@@ -6,6 +6,13 @@ import { ChatMessage, Repo, Workspace } from '../types';
 
 const router = Router();
 
+function toApiRepo(repo: Repo): Repo & { id: string } {
+  return {
+    ...repo,
+    id: repo.repoId,
+  };
+}
+
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
@@ -72,7 +79,7 @@ router.post(
 
     await setDoc('repos', repo.repoId, repo);
 
-    res.status(201).json(repo);
+    res.status(201).json(toApiRepo(repo));
   })
 );
 
@@ -86,7 +93,7 @@ router.get(
       throw createHttpError(404, 'Repo not found');
     }
 
-    res.json(repo);
+    res.json(toApiRepo(repo));
   })
 );
 
@@ -127,17 +134,23 @@ router.post(
       throw createHttpError(400, 'portalUrl is required');
     }
 
+    const nextRepo: Repo = {
+      ...repo,
+      status: 'running',
+      portalUrl: portalUrl.trim(),
+    };
+
     await setDoc(
       'repos',
       repo.repoId,
       {
-        status: 'running' satisfies Repo['status'],
-        portalUrl: portalUrl.trim(),
+        status: nextRepo.status,
+        portalUrl: nextRepo.portalUrl,
       },
       { merge: true }
     );
 
-    res.json({ success: true });
+    res.json(toApiRepo(nextRepo));
   })
 );
 
@@ -151,17 +164,23 @@ router.post(
       throw createHttpError(404, 'Repo not found');
     }
 
+    const nextRepo: Repo = {
+      ...repo,
+      status: 'ready',
+      portalUrl: null,
+    };
+
     await setDoc(
       'repos',
       repo.repoId,
       {
-        status: 'ready' satisfies Repo['status'],
-        portalUrl: null,
+        status: nextRepo.status,
+        portalUrl: nextRepo.portalUrl,
       },
       { merge: true }
     );
 
-    res.json({ success: true });
+    res.json(toApiRepo(nextRepo));
   })
 );
 
