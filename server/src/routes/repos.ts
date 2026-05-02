@@ -2,9 +2,11 @@ import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { asyncHandler, createHttpError, getRouteParam } from '../lib/http';
 import { deleteDoc, deleteDocsByQuery, getCollection, getDoc, setDoc } from '../lib/firebase';
+import { createLogger } from '../lib/logger';
 import { ChatMessage, Repo, Workspace } from '../types';
 
 const router = Router();
+const logger = createLogger('routes-repos');
 
 function toApiRepo(repo: Repo): Repo & { id: string } {
   return {
@@ -79,6 +81,12 @@ router.post(
 
     await setDoc('repos', repo.repoId, repo);
 
+    logger.info('repo_created', {
+      repoId: repo.repoId,
+      workspaceId: workspace.workspaceId,
+      repoName: repo.name,
+      githubOwner: new URL(repo.githubUrl).pathname.split('/').filter(Boolean)[0],
+    });
     res.status(201).json(toApiRepo(repo));
   })
 );
@@ -93,6 +101,11 @@ router.get(
       throw createHttpError(404, 'Repo not found');
     }
 
+    logger.debug('repo_returned', {
+      repoId: repo.repoId,
+      workspaceId: repo.workspaceId,
+      status: repo.status,
+    });
     res.json(toApiRepo(repo));
   })
 );
@@ -114,6 +127,10 @@ router.delete(
     );
     await deleteDoc('repos', repo.repoId);
 
+    logger.info('repo_deleted', {
+      repoId: repo.repoId,
+      workspaceId: repo.workspaceId,
+    });
     res.json({ success: true });
   })
 );
@@ -150,6 +167,11 @@ router.post(
       { merge: true }
     );
 
+    logger.info('repo_marked_running', {
+      repoId: repo.repoId,
+      workspaceId: repo.workspaceId,
+      hasPortalUrl: Boolean(nextRepo.portalUrl),
+    });
     res.json(toApiRepo(nextRepo));
   })
 );
@@ -180,6 +202,10 @@ router.post(
       { merge: true }
     );
 
+    logger.info('repo_marked_stopped', {
+      repoId: repo.repoId,
+      workspaceId: repo.workspaceId,
+    });
     res.json(toApiRepo(nextRepo));
   })
 );

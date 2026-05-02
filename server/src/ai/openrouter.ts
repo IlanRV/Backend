@@ -1,6 +1,8 @@
 import { config } from '../config';
+import { createLogger } from '../lib/logger';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const logger = createLogger('openrouter');
 
 interface OpenRouterResponse {
   choices?: Array<{
@@ -32,6 +34,7 @@ function structuredBody(userMessage: string, systemPrompt: string, jsonSchema: o
 
 function assertOpenRouterConfigured(): void {
   if (!config.openrouter.apiKey) {
+    logger.warn('openrouter_missing_api_key');
     throw new Error('OpenRouter API key is not configured. Set OPENROUTER_API_KEY in server/.env.');
   }
 }
@@ -39,6 +42,10 @@ function assertOpenRouterConfigured(): void {
 async function parseResponse(response: Response): Promise<string> {
   if (!response.ok) {
     const errorBody = await response.text();
+    logger.warn('openrouter_response_error', {
+      status: response.status,
+      bodyPreview: errorBody.slice(0, 500),
+    });
     throw new Error(`OpenRouter API error ${response.status}: ${errorBody}`);
   }
 
@@ -46,6 +53,7 @@ async function parseResponse(response: Response): Promise<string> {
   const content = data.choices?.[0]?.message?.content;
 
   if (!content) {
+    logger.warn('openrouter_missing_content');
     throw new Error('OpenRouter API response did not include assistant content.');
   }
 
@@ -58,6 +66,15 @@ export async function callOpenRouter(
   model?: string
 ): Promise<string> {
   assertOpenRouterConfigured();
+  const startedAt = Date.now();
+  const selectedModel = model || config.openrouter.model;
+
+  logger.info('openrouter_call_started', {
+    model: selectedModel,
+    mode: 'text',
+    userMessageLength: userMessage.length,
+    systemPromptLength: systemPrompt.length,
+  });
 
   const response = await fetch(OPENROUTER_URL, {
     method: 'POST',
@@ -66,7 +83,7 @@ export async function callOpenRouter(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: model || config.openrouter.model,
+      model: selectedModel,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage },
@@ -75,7 +92,14 @@ export async function callOpenRouter(
     }),
   });
 
-  return parseResponse(response);
+  const content = await parseResponse(response);
+  logger.info('openrouter_call_completed', {
+    model: selectedModel,
+    mode: 'text',
+    durationMs: Date.now() - startedAt,
+    responseLength: content.length,
+  });
+  return content;
 }
 
 export async function callOpenRouterStructured<T>(
@@ -84,6 +108,14 @@ export async function callOpenRouterStructured<T>(
   jsonSchema: object
 ): Promise<T> {
   assertOpenRouterConfigured();
+  const startedAt = Date.now();
+
+  logger.info('openrouter_call_started', {
+    model: config.openrouter.model,
+    mode: 'structured',
+    userMessageLength: userMessage.length,
+    systemPromptLength: systemPrompt.length,
+  });
 
   const headers = {
     Authorization: `Bearer ${config.openrouter.apiKey}`,
@@ -98,11 +130,22 @@ export async function callOpenRouterStructured<T>(
   const content = await parseResponse(response);
 
   try {
-    return JSON.parse(content) as T;
+    const parsed = JSON.parse(content) as T;
+    logger.info('openrouter_call_completed', {
+      model: config.openrouter.model,
+      mode: 'structured',
+      durationMs: Date.now() - startedAt,
+      responseLength: content.length,
+      retried: false,
+    });
+    return parsed;
   } catch {
-    console.warn('OpenRouter structured response was not valid JSON. Retrying once.');
+    logger.warn('openrouter_structured_json_parse_failed_retrying', {
+      responseLength: content.length,
+    });
   }
 
+  const retryStartedAt = Date.now();
   const retryResponse = await fetch(OPENROUTER_URL, {
     method: 'POST',
     headers,
@@ -115,5 +158,15 @@ export async function callOpenRouterStructured<T>(
     ),
   });
 
-  return JSON.parse(await parseResponse(retryResponse)) as T;
+  const retryContent = await parseResponse(retryResponse);
+  const parsed = JSON.parse(retryContent) as T;
+  logger.info('openrouter_call_completed', {
+    model: config.openrouter.model,
+    mode: 'structured',
+    durationMs: Date.now() - startedAt,
+    retryDurationMs: Date.now() - retryStartedAt,
+    responseLength: retryContent.length,
+    retried: true,
+  });
+  return parsed;
 }

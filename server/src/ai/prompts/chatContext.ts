@@ -1,4 +1,7 @@
 import { ChatMessage, Repo, Workspace } from '../../types';
+import { createLogger } from '../../lib/logger';
+
+const logger = createLogger('prompt-chat-context');
 
 function formatHistory(messages: ChatMessage[]): string {
   if (messages.length === 0) {
@@ -49,6 +52,13 @@ function formatRepoAnalysis(repo: Repo): string {
 }
 
 export function buildRepoChatSystemPrompt(repo: Repo, messages: ChatMessage[]): string {
+  logger.debug('repo_chat_prompt_built', {
+    repoId: repo.repoId,
+    status: repo.status,
+    hasAnalysis: Boolean(repo.analysis),
+    historyCount: messages.length,
+  });
+
   return [
     'You are a code expert assistant. You have access to the full source code of this repository through its extracted analysis.',
     'Answer clearly and ground your response in the repository context. If the requested detail is not present in the extracted analysis, say what is missing and suggest where to inspect next.',
@@ -64,6 +74,13 @@ export function buildWorkspaceChatSystemPrompt(
   repos: Repo[],
   messages: ChatMessage[]
 ): string {
+  logger.debug('workspace_chat_prompt_built', {
+    workspaceId: workspace.workspaceId,
+    repoCount: repos.length,
+    analyzedRepoCount: repos.filter((repo) => Boolean(repo.analysis)).length,
+    historyCount: messages.length,
+  });
+
   return [
     'You are a code expert. You have access to ALL repositories in this workspace through their extracted analyses.',
     'Compare repositories when useful, explain relationships between services, and be explicit when analysis data is incomplete.',

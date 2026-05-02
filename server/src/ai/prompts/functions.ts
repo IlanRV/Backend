@@ -1,8 +1,12 @@
+import { createLogger } from '../../lib/logger';
+
 interface PromptResult {
   system: string;
   user: string;
   schema: object;
 }
+
+const logger = createLogger('prompt-functions');
 
 export function buildFunctionsPrompt(files: { path: string; content: string }[]): PromptResult {
   const sourceFiles = files
@@ -13,6 +17,12 @@ export function buildFunctionsPrompt(files: { path: string; content: string }[])
     .slice(0, 15)
     .map((file) => `=== ${file.path} ===\n${file.content.slice(0, 5000)}`)
     .join('\n\n');
+  const sampledSourceCount = sourceFiles ? sourceFiles.split('\n\n=== ').length : 0;
+
+  logger.debug('functions_prompt_built', {
+    inputFileCount: files.length,
+    sampledSourceCount,
+  });
 
   const system = [
     'You are a code documentation expert.',

@@ -32,8 +32,21 @@ Copy `.env.example` to `.env` and fill in:
 - `FIREBASE_PROJECT_ID`
 - `FIREBASE_PRIVATE_KEY`
 - `FIREBASE_CLIENT_EMAIL`
+- `LOG_LEVEL` optional, one of `debug`, `info`, `warn`, or `error`
 
 The health endpoint works without Firebase credentials, but CRUD/chat routes need Firestore configured.
+
+## Logging
+
+The backend writes structured JSON logs to stdout/stderr with these fields:
+
+- `timestamp`
+- `level`
+- `scope`
+- `message`
+- `meta`
+
+Use `LOG_LEVEL=debug` during local development and `LOG_LEVEL=info` or `warn` for quieter runs. Logs intentionally include safe metadata such as IDs, counts, durations, route names, statuses, and feature flags. They redact sensitive key names and avoid logging raw prompts, repo source code, chat messages, API keys, Firebase private keys, and OpenRouter responses.
 
 This local project is currently configured for Firebase project `devhub-backend-2026`, with the default Firestore database in `eur3`.
 

@@ -2,17 +2,21 @@ import cors from 'cors';
 import express, { NextFunction, Request, Response } from 'express';
 import { config } from './config';
 import { HttpError } from './lib/http';
+import { createLogger, requestLogger } from './lib/logger';
 import aiRoutes from './routes/ai';
 import chatRoutes from './routes/chat';
 import repoRoutes from './routes/repos';
 import workspaceRoutes from './routes/workspaces';
 
 const app = express();
+const logger = createLogger('server');
 
-app.use(cors({ origin: config.corsOrigin }));
+app.use(cors({ origin: config.corsOrigins }));
+app.use(requestLogger());
 app.use(express.json({ limit: '35mb' }));
 
 app.get('/api/health', (_req, res) => {
+  logger.debug('health_check');
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
@@ -26,16 +30,33 @@ app.use((_req, _res, next) => {
 });
 
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-  console.error(err);
-
   if (err instanceof HttpError) {
+    logger.warn('http_error', {
+      statusCode: err.statusCode,
+      message: err.message,
+    });
     res.status(err.statusCode).json({ error: err.message });
     return;
   }
 
+  logger.error('unhandled_request_error', { error: err });
   res.status(500).json({ error: 'Internal server error', details: err.message });
 });
 
 app.listen(config.port, () => {
-  console.log(`Server running on http://localhost:${config.port}`);
+  logger.info('server_started', {
+    port: config.port,
+    corsOrigins: config.corsOrigins,
+    logLevel: config.logging.level,
+    firebaseConfigured: Boolean(config.firebase.projectId && config.firebase.clientEmail && config.firebase.privateKey),
+    openRouterConfigured: Boolean(config.openrouter.apiKey),
+  });
+});
+
+process.on('unhandledRejection', (reason) => {
+  logger.error('unhandled_rejection', { reason });
+});
+
+process.on('uncaughtException', (error) => {
+  logger.error('uncaught_exception', { error });
 });

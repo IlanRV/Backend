@@ -4,9 +4,11 @@ import { callOpenRouter } from '../ai/openrouter';
 import { buildRepoChatSystemPrompt, buildWorkspaceChatSystemPrompt } from '../ai/prompts/chatContext';
 import { getCollection, getDoc, setDoc } from '../lib/firebase';
 import { asyncHandler, createHttpError, getRouteParam } from '../lib/http';
+import { createLogger } from '../lib/logger';
 import { ChatMessage, Repo, Workspace } from '../types';
 
 const router = Router();
+const logger = createLogger('routes-chat');
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
@@ -49,6 +51,13 @@ async function saveChatMessage(message: Omit<ChatMessage, 'messageId' | 'timesta
   };
 
   await setDoc('chat_messages', chatMessage.messageId, chatMessage);
+  logger.debug('chat_message_saved', {
+    messageId: chatMessage.messageId,
+    scopeType: chatMessage.scopeType,
+    scopeId: chatMessage.scopeId,
+    role: chatMessage.role,
+    contentLength: chatMessage.content.length,
+  });
   return chatMessage;
 }
 
@@ -70,6 +79,11 @@ router.post(
 
     const history = await getLastMessages('repo', repo.repoId);
     const systemPrompt = buildRepoChatSystemPrompt(repo, history);
+    logger.info('repo_chat_requested', {
+      repoId: repo.repoId,
+      historyCount: history.length,
+      messageLength: message.trim().length,
+    });
     const reply = await callOpenRouter(message.trim(), systemPrompt);
 
     await saveChatMessage({
@@ -85,6 +99,10 @@ router.post(
       content: reply,
     });
 
+    logger.info('repo_chat_replied', {
+      repoId: repo.repoId,
+      replyLength: reply.length,
+    });
     res.json({ reply });
   })
 );
@@ -99,7 +117,12 @@ router.get(
       throw createHttpError(404, 'Repo not found');
     }
 
-    res.json(await getMessages('repo', repo.repoId));
+    const messages = await getMessages('repo', repo.repoId);
+    logger.debug('repo_chat_history_returned', {
+      repoId: repo.repoId,
+      messageCount: messages.length,
+    });
+    res.json(messages);
   })
 );
 
@@ -128,6 +151,12 @@ router.post(
     })).sort((left, right) => left.createdAt.localeCompare(right.createdAt));
     const history = await getLastMessages('workspace', workspace.workspaceId);
     const systemPrompt = buildWorkspaceChatSystemPrompt(workspace, repos, history);
+    logger.info('workspace_chat_requested', {
+      workspaceId: workspace.workspaceId,
+      repoCount: repos.length,
+      historyCount: history.length,
+      messageLength: message.trim().length,
+    });
     const reply = await callOpenRouter(message.trim(), systemPrompt);
 
     await saveChatMessage({
@@ -143,6 +172,10 @@ router.post(
       content: reply,
     });
 
+    logger.info('workspace_chat_replied', {
+      workspaceId: workspace.workspaceId,
+      replyLength: reply.length,
+    });
     res.json({ reply });
   })
 );
@@ -156,7 +189,12 @@ router.get(
     if (!workspace) {
       throw createHttpError(404, 'Workspace not found');
     }
-    res.json(await getMessages('workspace', workspace.workspaceId));
+    const messages = await getMessages('workspace', workspace.workspaceId);
+    logger.debug('workspace_chat_history_returned', {
+      workspaceId: workspace.workspaceId,
+      messageCount: messages.length,
+    });
+    res.json(messages);
   })
 );
 

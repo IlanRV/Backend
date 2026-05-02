@@ -1,5 +1,6 @@
 import { config } from '../config';
 import { getDoc, setDoc } from '../lib/firebase';
+import { createLogger } from '../lib/logger';
 import type { ExtractionResult, FunctionDoc, Overview, RunnabilityResult, TechStack } from '../types';
 import { callOpenRouter, callOpenRouterStructured } from './openrouter';
 import { buildAiReadmePrompt } from './prompts/aiReadme';
@@ -44,6 +45,7 @@ const nativeDependencyBlocklist = [
   'sqlite3',
 ];
 const runScriptPriority = ['dev', 'start', 'serve'] as const;
+const logger = createLogger('ai-extraction');
 const configFileMatchers = [
   'tsconfig.json',
   '.eslintrc',
@@ -310,6 +312,10 @@ function buildFallbackAiReadme(
 }
 
 function buildFallbackExtraction(repoName: string, files: ExtractionFile[]): ExtractAllResult {
+  logger.debug('fallback_extraction_building', {
+    repoName,
+    fileCount: files.length,
+  });
   const packageMetadata = getPackageMetadata(files);
   const dependencies = { ...packageMetadata.dependencies, ...packageMetadata.devDependencies };
   const techStack = buildFallbackTechStack(files, packageMetadata);
@@ -349,7 +355,9 @@ function hasOpenRouterKey(): boolean {
 }
 
 async function repoStillExists(repoId: string): Promise<boolean> {
-  return Boolean(await getDoc('repos', repoId));
+  const exists = Boolean(await getDoc('repos', repoId));
+  logger.debug('repo_existence_checked', { repoId, exists });
+  return exists;
 }
 
 export async function extractAll(
@@ -358,6 +366,7 @@ export async function extractAll(
   fileTree: string,
   files: ExtractionFile[]
 ): Promise<ExtractAllResult> {
+  const startedAt = Date.now();
   const normalizedFileTree = fileTree.trim() || files.map((file) => file.path).join('\n');
   const fallback = buildFallbackExtraction(repoName, files);
   let techStack = fallback.analysis.techStack;
@@ -371,64 +380,75 @@ export async function extractAll(
   const packageJson = parseJsonObject(packageJsonText);
   const readme = extractReadme(files) || '';
 
-  console.log(`[Extraction] Starting extraction for repo ${repoId} (${repoName})`);
-  console.log(`[Extraction] File tree: ${normalizedFileTree.split('\n').filter(Boolean).length} entries, ${files.length} files`);
+  logger.info('extraction_started', {
+    repoId,
+    repoName,
+    treeEntryCount: normalizedFileTree.split('\n').filter(Boolean).length,
+    fileCount: files.length,
+  });
 
   if (!hasOpenRouterKey()) {
-    console.log('[Extraction] OPENROUTER_API_KEY is not configured; using local fallback extraction.');
+    logger.warn('openrouter_missing_using_fallback', { repoId });
   } else {
-    console.log('[Extraction] Step 1/4: Detecting tech stack...');
+    logger.info('extraction_step_started', { repoId, step: 'tech_stack' });
     try {
       const prompt = buildTechStackPrompt(normalizedFileTree, packageJsonText, getConfigFiles(files));
       techStack = await callOpenRouterStructured<TechStack>(prompt.user, prompt.system, prompt.schema);
-      console.log(`[Extraction] Tech stack detected: ${techStack.language} / ${techStack.framework || 'none'}`);
+      logger.info('tech_stack_detected', {
+        repoId,
+        language: techStack.language,
+        framework: techStack.framework || 'none',
+      });
     } catch (error) {
-      console.error('[Extraction] Tech stack detection failed:', error);
+      logger.error('tech_stack_detection_failed', { repoId, error });
     }
 
-    console.log('[Extraction] Step 2/4: Generating overview...');
+    logger.info('extraction_step_started', { repoId, step: 'overview' });
     try {
       const prompt = buildOverviewPrompt(readme, packageJson, normalizedFileTree);
       overview = await callOpenRouterStructured<Overview>(prompt.user, prompt.system, prompt.schema);
-      console.log(`[Extraction] Overview generated: ${overview.oneLiner.slice(0, 80)}...`);
+      logger.info('overview_generated', {
+        repoId,
+        oneLinerLength: overview.oneLiner.length,
+      });
     } catch (error) {
-      console.error('[Extraction] Overview generation failed:', error);
+      logger.error('overview_generation_failed', { repoId, error });
     }
 
-    console.log('[Extraction] Step 3/4: Documenting functions...');
+    logger.info('extraction_step_started', { repoId, step: 'functions' });
     try {
       const prompt = buildFunctionsPrompt(files);
       const aiFunctions = await callOpenRouterStructured<FunctionDoc[]>(prompt.user, prompt.system, prompt.schema);
       functions = aiFunctions.length > 0 ? aiFunctions : functions;
-      console.log(`[Extraction] Documented ${functions.length} functions`);
+      logger.info('functions_documented', { repoId, functionCount: functions.length });
     } catch (error) {
-      console.error('[Extraction] Function documentation failed:', error);
+      logger.error('function_documentation_failed', { repoId, error });
     }
   }
 
   const analysis: ExtractionResult = { techStack, overview, functions, dependencies };
 
   if (!(await repoStillExists(repoId))) {
-    console.log(`[Extraction] Repo ${repoId} was deleted before partial results were saved; skipping writes.`);
+    logger.warn('repo_deleted_before_partial_save', { repoId });
     return { analysis, aiReadme, runnability };
   }
 
   await setDoc('repos', repoId, { analysis, runnability }, { merge: true });
 
   if (hasOpenRouterKey()) {
-    console.log('[Extraction] Step 4/4: Generating AI README...');
+    logger.info('extraction_step_started', { repoId, step: 'ai_readme' });
     try {
       const prompt = buildAiReadmePrompt(techStack, overview, functions, dependencies, repoName);
       const generatedReadme = await callOpenRouter(prompt.user, prompt.system);
       aiReadme = generatedReadme.trim() || aiReadme;
-      console.log(`[Extraction] AI README generated (${aiReadme.length} chars)`);
+      logger.info('ai_readme_generated', { repoId, readmeLength: aiReadme.length });
     } catch (error) {
-      console.error('[Extraction] AI README generation failed:', error);
+      logger.error('ai_readme_generation_failed', { repoId, error });
     }
   }
 
   if (!(await repoStillExists(repoId))) {
-    console.log(`[Extraction] Repo ${repoId} was deleted before final results were saved; skipping writes.`);
+    logger.warn('repo_deleted_before_final_save', { repoId });
     return { analysis, aiReadme, runnability };
   }
 
@@ -444,6 +464,11 @@ export async function extractAll(
     { merge: true }
   );
 
-  console.log(`[Extraction] Extraction complete for repo ${repoId}`);
+  logger.info('extraction_completed', {
+    repoId,
+    durationMs: Date.now() - startedAt,
+    functionCount: functions.length,
+    canRun: runnability.canRun,
+  });
   return { analysis, aiReadme, runnability };
 }

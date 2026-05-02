@@ -10,8 +10,10 @@ import {
   setDoc,
 } from '../lib/firebase';
 import { ChatMessage, Repo, Workspace } from '../types';
+import { createLogger } from '../lib/logger';
 
 const router = Router();
+const logger = createLogger('routes-workspaces');
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
@@ -52,6 +54,10 @@ router.get(
       })
     );
 
+    logger.info('workspaces_listed', {
+      workspaceCount: workspaces.length,
+      repoCount: workspaces.reduce((count, workspace) => count + workspace.repoCount, 0),
+    });
     res.json(workspaces);
   })
 );
@@ -74,6 +80,11 @@ router.post(
 
     await setDoc('workspaces', workspace.workspaceId, workspace);
 
+    logger.info('workspace_created', {
+      workspaceId: workspace.workspaceId,
+      name: workspace.name,
+      hasDescription: workspace.description.length > 0,
+    });
     res.status(201).json({ ...workspace, id: workspace.workspaceId, repoCount: 0 });
   })
 );
@@ -93,6 +104,10 @@ router.get(
       .get();
     const repos = repoSnapshot.docs.map(repoFromDoc).sort(byCreatedAt);
 
+    logger.debug('workspace_returned', {
+      workspaceId: workspace.workspaceId,
+      repoCount: repos.length,
+    });
     res.json({
       ...workspace,
       repoCount: repos.length,
@@ -132,6 +147,10 @@ router.delete(
     await deleteQuerySnapshot(repoSnapshot);
     await deleteDoc('workspaces', workspace.workspaceId);
 
+    logger.info('workspace_deleted', {
+      workspaceId: workspace.workspaceId,
+      repoCount: repoSnapshot.size,
+    });
     res.json({ success: true });
   })
 );

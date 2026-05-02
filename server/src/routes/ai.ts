@@ -2,9 +2,11 @@ import { Router } from 'express';
 import { extractAll, type ExtractionFile } from '../ai/extraction';
 import { getDoc, setDoc } from '../lib/firebase';
 import { asyncHandler, createHttpError, getRouteParam } from '../lib/http';
+import { createLogger } from '../lib/logger';
 import type { Repo } from '../types';
 
 const router = Router();
+const logger = createLogger('routes-ai');
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -76,14 +78,24 @@ router.post(
     const files = getRequestFiles(req.body);
     const fileTree = getRequestFileTree(req.body, files);
 
+    logger.info('ai_extraction_requested', {
+      repoId: repo.repoId,
+      repoName: repo.name,
+      fileCount: files.length,
+      fileTreeLineCount: fileTree.split('\n').filter(Boolean).length,
+    });
+
     await setDoc('repos', repo.repoId, { status: 'analyzing' satisfies Repo['status'] }, { merge: true });
 
     void extractAll(repo.repoId, repo.name, fileTree, files)
       .then((result) => {
-        console.log(`[AI Route] Extraction complete for repo ${repo.repoId}: ${result.analysis.functions.length} symbols`);
+        logger.info('ai_extraction_background_completed', {
+          repoId: repo.repoId,
+          functionCount: result.analysis.functions.length,
+        });
       })
       .catch((error: unknown) => {
-        console.error(`[AI Route] Extraction failed for repo ${repo.repoId}:`, error);
+        logger.error('ai_extraction_background_failed', { repoId: repo.repoId, error });
         void setDoc('repos', repo.repoId, { status: 'error' satisfies Repo['status'] }, { merge: true });
       });
 
@@ -100,6 +112,13 @@ router.get(
     if (!repo) {
       throw createHttpError(404, 'Repo not found');
     }
+
+    logger.debug('ai_extraction_result_requested', {
+      repoId,
+      status: repo.status,
+      hasAnalysis: Boolean(repo.analysis),
+      hasAiReadme: Boolean(repo.aiReadme),
+    });
 
     res.json({
       status: repo.status,
