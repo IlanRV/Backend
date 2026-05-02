@@ -3,17 +3,11 @@ import { v4 as uuidv4 } from 'uuid';
 import { asyncHandler, createHttpError, getRouteParam } from '../lib/http';
 import { deleteDoc, deleteDocsByQuery, getCollection, getDoc, setDoc } from '../lib/firebase';
 import { createLogger } from '../lib/logger';
+import { toApiRepo } from '../lib/repoResponse';
 import { ChatMessage, Repo, Workspace } from '../types';
 
 const router = Router();
 const logger = createLogger('routes-repos');
-
-function toApiRepo(repo: Repo): Repo & { id: string } {
-  return {
-    ...repo,
-    id: repo.repoId,
-  };
-}
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
@@ -76,6 +70,9 @@ router.post(
       fileTree: null,
       analysis: null,
       aiReadme: null,
+      aiReadmeStatus: null,
+      runnable: false,
+      runScript: null,
       portalUrl: null,
       createdAt: new Date().toISOString(),
     };
@@ -156,6 +153,7 @@ router.post(
       ...repo,
       status: 'running',
       portalUrl: portalUrl.trim(),
+      updatedAt: new Date().toISOString(),
     };
 
     await setDoc(
@@ -164,6 +162,7 @@ router.post(
       {
         status: nextRepo.status,
         portalUrl: nextRepo.portalUrl,
+        updatedAt: nextRepo.updatedAt,
       },
       { merge: true }
     );
@@ -191,6 +190,7 @@ router.post(
       ...repo,
       status: 'ready',
       portalUrl: null,
+      updatedAt: new Date().toISOString(),
     };
 
     await setDoc(
@@ -199,6 +199,7 @@ router.post(
       {
         status: nextRepo.status,
         portalUrl: nextRepo.portalUrl,
+        updatedAt: nextRepo.updatedAt,
       },
       { merge: true }
     );

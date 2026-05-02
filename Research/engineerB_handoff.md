@@ -52,7 +52,7 @@ from:
 server/src/routes/ai.ts
 ```
 
-That file currently contains a local heuristic extraction baseline. It accepts:
+That file now starts the OpenRouter-backed extraction pipeline in the background, with local heuristic fallback if OpenRouter is unavailable. It accepts:
 
 ```json
 {
@@ -64,14 +64,25 @@ That file currently contains a local heuristic extraction baseline. It accepts:
 }
 ```
 
+The frontend may also send `fileTree` as a structured BrowserPod `FileTreeNode` object. The backend normalizes both shapes for prompt input and stores the structured tree on the repo document when available.
+
 and stores these fields on the repo document:
 
 - `status`
 - `analysis`
 - `aiReadme`
 - `runnability`
+- `fileTree`
+- `analysisSourceHash`
+- `analysisStartedAt`
+- `analysisUpdatedAt`
+- `analysisModel`
+- `analysisError`
+- `aiReadmeStatus`
+- `runnable`
+- `runScript`
 
-You can replace or extend that route with the OpenRouter-backed extraction pipeline. Keep the mounted public API shape:
+Keep the mounted public API shape:
 
 - `POST /api/ai/extract/:repoId`
 - `GET /api/ai/extract/:repoId`
@@ -85,6 +96,8 @@ You can replace or extend that route with the OpenRouter-backed extraction pipel
 - `setDoc` supports a fourth `options` argument, so updates can use `{ merge: true }`.
 - `getDoc` returns the document data plus collection-specific ID fields like `repoId`, `workspaceId`, and `messageId`.
 - The local smoke test now verifies CRUD, extraction, run/stop, and cleanup.
+- Repo API responses now include frontend compatibility fields: `runnable`, `runScript`, and `aiReadmeStatus`.
+- The frontend workspace page polls every 3 seconds while any repo is `cloning` or `analyzing`, so completed background extraction should appear without a manual refresh.
 
 ## Do Not Commit
 
@@ -97,5 +110,6 @@ You can replace or extend that route with the OpenRouter-backed extraction pipel
 As of 2026-05-02:
 
 - `npm run build` passes.
+- `/Users/yusufyusuf/Documents/Frontend` `npm run build` passes after the extraction polling update.
 - `npm run smoke` passes against live Firestore.
 - Firestore rules and indexes are deployed.

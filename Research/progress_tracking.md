@@ -10,7 +10,7 @@ This file tracks how much of the Engineer A and Engineer B backend work is done,
 
 - Engineer A: core backend is largely implemented and locally verified.
 - Engineer B: extraction pipeline, prompts, AI routes, and live OpenRouter flow are implemented and locally verified.
-- Main remaining blocker for full product validation: run the real BrowserPod/frontend add-repo flow on one or two actual GitHub repos.
+- Main remaining blocker for full product validation: run the real BrowserPod/frontend add-repo flow on one or two actual GitHub repos and inspect generated README quality.
 
 ### Verified today
 
@@ -18,6 +18,9 @@ This file tracks how much of the Engineer A and Engineer B backend work is done,
 - Frontend `npm run build` passes.
 - Backend `npm run smoke` passes against live Firestore.
 - Backend `npm run smoke` passes against live Firestore and live OpenRouter when the server is running on Node 22.
+- Backend repo responses now expose `runnable`, `runScript`, and `aiReadmeStatus` for frontend compatibility.
+- Frontend workspace repo lists now poll active `cloning`/`analyzing` repos every 3 seconds until extraction completes or errors.
+- Frontend `npm run build` passes after the extraction polling and repo-card compatibility updates.
 - Repo chat and workspace chat return live OpenRouter responses.
 - `GET /api/ai/extract/:repoId` now returns pending or partial data instead of a cache-miss 404.
 - BrowserPod add-repo flow is aligned with the backend extraction contract.
@@ -94,6 +97,8 @@ Reference: `Research/engineerB_spec.md`
 
 - Frontend BrowserPod flow sends `fileTree` as an object structure, not only as a newline string. The backend now accepts both forms.
 - Frontend AI README loading no longer loops on a pending extraction state.
+- Frontend workspace cards now refresh active extraction state automatically, so background completion should show without manual page refresh.
+- Backend repo responses include derived run and AI README status fields that match frontend expectations.
 - Existing repos without cached extraction now return a useful pending payload instead of an error response.
 - Local extraction still works even when `OPENROUTER_API_KEY` is missing, through the heuristic fallback pipeline.
 

@@ -67,7 +67,7 @@ Use `LOG_LEVEL=debug` during local development and `LOG_LEVEL=info` or `warn` fo
 
 This local project is currently configured for Firebase project `devhub-backend-2026`, with the default Firestore database in `eur3`.
 
-## Implemented In This Chunk
+## Current API Coverage
 
 - `GET /api/health`
 - Workspace CRUD routes
@@ -76,15 +76,19 @@ This local project is currently configured for Firebase project `devhub-backend-
 - Firebase Admin helper functions, including `setDoc(..., { merge: true })`
 - Repo/workspace chat routes wired to `src/ai/openrouter.ts`
 - Chat system prompt builder at `src/ai/prompts/chatContext.ts`
-- Local heuristic `POST /api/ai/extract/:repoId` baseline that stores `analysis`, `aiReadme`, and `runnability`
+- Async `POST /api/ai/extract/:repoId` route that accepts BrowserPod file trees as either newline strings or structured `FileTreeNode` objects
+- Cached `GET /api/ai/extract/:repoId` route that returns pending-safe extraction payloads, AI README content, runnability, lifecycle metadata, and provider errors when available
+- OpenRouter-backed extraction prompts for tech stack, overview, function documentation, and AI README generation, with local fallback extraction when the model is unavailable
+- Repo responses include frontend compatibility fields: `runnable`, `runScript`, and `aiReadmeStatus`
 
 ## Engineer B Handoff
 
-The expected paths already exist:
+The expected paths are implemented:
 
-- `src/ai/openrouter.ts` has the base OpenRouter client.
-- `src/routes/ai.ts` is mounted at `/api/ai` and currently contains a local heuristic extraction baseline.
+- `src/ai/openrouter.ts` handles OpenRouter text and structured calls, retries/validation, model cooldowns, and readable degraded errors.
+- `src/ai/extraction.ts` orchestrates tech stack, overview, functions, dependencies, runnability, and AI README generation.
+- `src/routes/ai.ts` starts extraction in the background, dedupes repeated source payloads, returns cached results, and marks failed background jobs with `status: "error"` plus `aiReadmeStatus: "error"`.
 
-Next, Engineer B can replace or extend the heuristic extraction in `src/routes/ai.ts` with the OpenRouter-backed pipeline and add the prompt/orchestration files described in `../Research/engineerB_spec.md`.
+The remaining product validation step is to run the BrowserPod frontend add-repo flow against real GitHub repos and inspect generated README quality.
 
 See `../Research/engineerB_handoff.md` for the current integration notes.

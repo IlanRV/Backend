@@ -16,6 +16,8 @@ Use this checklist after the backend is running with the intended OpenRouter mod
 - Function documentation is capped at three source chunks.
 - Structured extraction stops after validation/provider failure and falls back locally instead of spending calls on later steps.
 - Duplicate immediate chat sends reuse the previous assistant reply.
+- Frontend workspace repo cards poll active `cloning`/`analyzing` statuses instead of requiring a manual refresh after background extraction finishes.
+- Backend repo responses expose `runnable`, `runScript`, and `aiReadmeStatus` alongside the canonical `runnability` and `aiReadme` fields.
 
 ## Manual BrowserPod Flow
 
@@ -23,7 +25,7 @@ Use this checklist after the backend is running with the intended OpenRouter mod
 2. Start frontend from `/Users/yusufyusuf/Documents/Frontend`: `npm run dev`.
 3. Add a small Express API repo, such as TaskTracker.
 4. Confirm the Add Repo modal reaches "Sending source context for AI extraction" and closes without errors.
-5. Confirm the repo transitions from `cloning` to `analyzing` to `ready`.
+5. Confirm the repo card transitions from `cloning` to `analyzing` to `ready` without manually refreshing the workspace page.
 6. Open the AI README tab and verify the README is present, specific, and not generic boilerplate.
 7. Open repo chat and ask one concrete question about a documented function or route.
 8. Send the exact same chat message again and confirm the backend returns a cached reply.
@@ -48,6 +50,7 @@ The second response should include either `"deduped": true` or `"cached": true`.
 ## Pass Criteria
 
 - `GET /api/ai/extract/:repoId` returns `techStack`, `overview`, `functions`, `dependencies`, `aiReadme`, and `runnability`.
+- Repo API responses include `aiReadmeStatus: "ready"`, accurate `runnable`, and `runScript` after extraction finishes.
 - Generated docs mention real files/functions from the repo.
 - Chat replies cite extracted context and do not claim live access to files.
 - Repeated extraction/chat actions do not trigger duplicate paid model calls.

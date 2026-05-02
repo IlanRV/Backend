@@ -19,9 +19,14 @@ export interface Repo {
   analysisStartedAt?: string;
   analysisUpdatedAt?: string;
   analysisModel?: string | null;
+  analysisError?: string | null;
   aiReadme: string | null;
+  aiReadmeStatus?: 'pending' | 'ready' | 'error' | null;
+  runnable?: boolean;
+  runScript?: string | null;
   portalUrl: string | null;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface FileTreeNode {

@@ -11,6 +11,7 @@ import {
 } from '../lib/firebase';
 import { ChatMessage, Repo, Workspace } from '../types';
 import { createLogger } from '../lib/logger';
+import { toApiRepo } from '../lib/repoResponse';
 
 const router = Router();
 const logger = createLogger('routes-workspaces');
@@ -20,11 +21,13 @@ function isNonEmptyString(value: unknown): value is string {
 }
 
 function repoFromDoc(document: FirebaseFirestore.QueryDocumentSnapshot): Repo {
-  return {
+  const repo = {
     ...(document.data() as Repo),
     id: document.id,
     repoId: document.id,
-  } as Repo & { id: string };
+  } as Repo;
+
+  return toApiRepo(repo);
 }
 
 function byCreatedAt(left: { createdAt: string }, right: { createdAt: string }): number {

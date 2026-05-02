@@ -145,6 +145,10 @@ function isFreshAnalyzing(repo: Repo): boolean {
   return Number.isFinite(startedAt) && Date.now() - startedAt < staleAnalysisMs;
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unknown extraction error';
+}
+
 router.post(
   '/extract/:repoId',
   asyncHandler(async (req, res) => {
@@ -181,7 +185,10 @@ router.post(
       status: 'analyzing',
       analysisSourceHash: sourceHash,
       analysisStartedAt: new Date().toISOString(),
+      analysisError: null,
       analysisModel: config.openrouter.apiKey ? config.openrouter.model : null,
+      aiReadmeStatus: 'pending',
+      updatedAt: new Date().toISOString(),
     };
 
     if (structuredFileTree) {
@@ -200,7 +207,17 @@ router.post(
       })
       .catch((error: unknown) => {
         logger.error('ai_extraction_background_failed', { repoId: repo.repoId, error });
-        void setDoc('repos', repo.repoId, { status: 'error' satisfies Repo['status'] }, { merge: true });
+        void setDoc(
+          'repos',
+          repo.repoId,
+          {
+            status: 'error' satisfies Repo['status'],
+            aiReadmeStatus: 'error' satisfies NonNullable<Repo['aiReadmeStatus']>,
+            analysisError: errorMessage(error),
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
       })
       .finally(() => {
         activeExtractions.delete(repo.repoId);
@@ -228,13 +245,27 @@ router.get(
     });
 
     res.json({
+      success: true,
+      extractionId: repo.repoId,
       status: repo.status,
+      aiReadmeStatus:
+        repo.aiReadmeStatus ??
+        (repo.aiReadme
+          ? 'ready'
+          : repo.status === 'analyzing' || repo.status === 'cloning'
+            ? 'pending'
+            : repo.status === 'error'
+              ? 'error'
+              : null),
       techStack: repo.analysis?.techStack || null,
       overview: repo.analysis?.overview || null,
       functions: repo.analysis?.functions || [],
       dependencies: repo.analysis?.dependencies || {},
       aiReadme: repo.aiReadme || null,
       runnability: repo.runnability || null,
+      analysisUpdatedAt: repo.analysisUpdatedAt || null,
+      analysisModel: repo.analysisModel || null,
+      analysisError: repo.analysisError || null,
     });
   })
 );

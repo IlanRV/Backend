@@ -1,7 +1,7 @@
 import { config } from '../config';
 import { getDoc, setDoc } from '../lib/firebase';
 import { createLogger } from '../lib/logger';
-import type { ExtractionResult, FunctionDoc, Overview, RunnabilityResult, TechStack } from '../types';
+import type { ExtractionResult, FunctionDoc, Overview, Repo, RunnabilityResult, TechStack } from '../types';
 import {
   callOpenRouter,
   callOpenRouterStructured,
@@ -538,9 +538,22 @@ export async function extractAll(
     ...(options.sourceHash ? { analysisSourceHash: options.sourceHash } : {}),
     analysisModel: hasOpenRouterKey() ? config.openrouter.model : null,
     analysisUpdatedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   };
 
-  await setDoc('repos', repoId, { analysis, runnability, ...analysisMetadata }, { merge: true });
+  await setDoc(
+    'repos',
+    repoId,
+    {
+      analysis,
+      runnability,
+      runnable: runnability.canRun,
+      runScript: runnability.entryPoint,
+      aiReadmeStatus: 'pending' satisfies NonNullable<Repo['aiReadmeStatus']>,
+      ...analysisMetadata,
+    },
+    { merge: true }
+  );
 
   if (hasOpenRouterKey() && !aiUnavailableReason) {
     logger.info('extraction_step_started', { repoId, step: 'ai_readme' });
@@ -568,7 +581,11 @@ export async function extractAll(
       status: 'ready',
       analysis,
       aiReadme,
+      aiReadmeStatus: aiReadme ? 'ready' : 'error',
       runnability,
+      runnable: runnability.canRun,
+      runScript: runnability.entryPoint,
+      analysisError: null,
       ...analysisMetadata,
     },
     { merge: true }
