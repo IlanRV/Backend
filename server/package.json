@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "nodemon --watch src --ext ts,json --exec ts-node src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "smoke": "node scripts/smoke-test.mjs"
   },
   "keywords": [],
   "author": "",
