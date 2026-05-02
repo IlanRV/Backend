@@ -55,6 +55,7 @@ const nativeDependencyBlocklist = [
   'sqlite3',
 ];
 const runScriptPriority = ['dev', 'start', 'serve'] as const;
+const routeScanExtensions = new Set(['.js', '.jsx', '.ts', '.tsx']);
 const logger = createLogger('ai-extraction');
 const configFileMatchers = [
   'tsconfig.json',
@@ -257,11 +258,52 @@ function buildFallbackFunctions(files: ExtractionFile[]): FunctionDoc[] {
   return docs;
 }
 
-function buildRunnability(packageMetadata: PackageMetadata): RunnabilityResult {
+function uniquePreviewPaths(paths: string[]): string[] {
+  return [...new Set(paths.map((path) => path.trim()).filter(Boolean))]
+    .map((path) => (path.startsWith('/') ? path : `/${path}`))
+    .filter((path) => !path.includes(':') && !path.includes('*'))
+    .slice(0, 8);
+}
+
+function detectRoutePaths(content: string): string[] {
+  const paths: string[] = [];
+  const routeCallPattern =
+    /\b(?:app|router)\s*\.\s*(?:get|post|put|patch|delete|all|use)\s*\(\s*["'`]([^"'`]+)["'`]/g;
+  const routeChainPattern = /\brouter\s*\.\s*route\s*\(\s*["'`]([^"'`]+)["'`]/g;
+
+  for (const match of content.matchAll(routeCallPattern)) {
+    paths.push(match[1]);
+  }
+
+  for (const match of content.matchAll(routeChainPattern)) {
+    paths.push(match[1]);
+  }
+
+  return paths;
+}
+
+function detectPreviewPaths(files: ExtractionFile[]): string[] {
+  return uniquePreviewPaths(
+    files
+      .filter((file) => routeScanExtensions.has(extensionOf(file.path)))
+      .flatMap((file) => detectRoutePaths(file.content))
+  );
+}
+
+function choosePreviewPath(paths: string[]): string | undefined {
+  return (
+    paths.find((path) => path === '/api/health' || path === '/health') ??
+    paths.find((path) => path !== '/') ??
+    paths[0]
+  );
+}
+
+function buildRunnability(packageMetadata: PackageMetadata, files: ExtractionFile[]): RunnabilityResult {
   const blockers: string[] = [];
   const entryPoint = runScriptPriority.find((scriptName) => Boolean(packageMetadata.scripts[scriptName])) || null;
   const dependencies = { ...packageMetadata.dependencies, ...packageMetadata.devDependencies };
   const blockedDependencies = nativeDependencyBlocklist.filter((dependency) => Boolean(dependencies[dependency]));
+  const previewPaths = detectPreviewPaths(files);
 
   if (!packageMetadata.hasPackageJson) {
     blockers.push('No readable package.json found at repo root');
@@ -273,11 +315,18 @@ function buildRunnability(packageMetadata: PackageMetadata): RunnabilityResult {
     blockers.push(`Unsupported native/runtime dependencies: ${blockedDependencies.join(', ')}`);
   }
 
-  return {
+  const result: RunnabilityResult = {
     canRun: blockers.length === 0,
     entryPoint,
     blockers,
   };
+
+  if (previewPaths.length > 0) {
+    result.previewPaths = previewPaths;
+    result.previewPath = choosePreviewPath(previewPaths);
+  }
+
+  return result;
 }
 
 function buildFallbackAiReadme(
@@ -333,7 +382,7 @@ function buildFallbackExtraction(repoName: string, files: ExtractionFile[]): Ext
   const title = firstMarkdownHeading(readme) || packageMetadata.name || repoName;
   const summary = firstParagraph(readme) || packageMetadata.description || `${repoName} is a ${techStack.language} project.`;
   const functions = buildFallbackFunctions(files);
-  const runnability = buildRunnability(packageMetadata);
+  const runnability = buildRunnability(packageMetadata, files);
   const analysis: ExtractionResult = {
     techStack,
     overview: {

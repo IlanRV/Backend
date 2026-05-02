@@ -5,6 +5,7 @@ import { extractAll, type ExtractionFile } from '../ai/extraction';
 import { getDoc, setDoc } from '../lib/firebase';
 import { asyncHandler, createHttpError, getRouteParam } from '../lib/http';
 import { createLogger } from '../lib/logger';
+import { saveRepoFiles } from '../lib/repoFiles';
 import type { FileTreeNode, Repo } from '../types';
 
 const router = Router();
@@ -170,6 +171,21 @@ router.post(
       fileCount: files.length,
       fileTreeLineCount: fileTree.split('\n').filter(Boolean).length,
     });
+
+    await Promise.all([
+      saveRepoFiles(repo.repoId, files, sourceHash),
+      structuredFileTree
+        ? setDoc(
+            'repos',
+            repo.repoId,
+            {
+              fileTree: structuredFileTree,
+              updatedAt: new Date().toISOString(),
+            },
+            { merge: true }
+          )
+        : Promise.resolve(),
+    ]);
 
     if (activeExtractions.has(repo.repoId) || isFreshAnalyzing(repo)) {
       res.status(202).json({ success: true, extractionId: repo.repoId, status: 'analyzing', deduped: true });

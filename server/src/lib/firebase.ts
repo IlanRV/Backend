@@ -8,6 +8,7 @@ const logger = createLogger('firebase');
 const idFieldsByCollection: Record<string, string> = {
   workspaces: 'workspaceId',
   repos: 'repoId',
+  repo_files: 'repoFileId',
   chat_messages: 'messageId',
 };
 

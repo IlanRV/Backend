@@ -15,6 +15,7 @@ import { toApiRepo } from '../lib/repoResponse';
 
 const router = Router();
 const logger = createLogger('routes-workspaces');
+const MAX_WORKSPACES = 3;
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
@@ -72,6 +73,16 @@ router.post(
 
     if (!isNonEmptyString(name) || typeof description !== 'string') {
       throw createHttpError(400, 'name and description are required');
+    }
+
+    const workspaceSnapshot = await getCollection('workspaces').get();
+
+    if (workspaceSnapshot.size >= MAX_WORKSPACES) {
+      logger.warn('workspace_limit_reached', {
+        workspaceCount: workspaceSnapshot.size,
+        workspaceLimit: MAX_WORKSPACES,
+      });
+      throw createHttpError(409, 'Workspace limit reached. Delete a workspace before creating another.');
     }
 
     const workspace: Workspace = {
@@ -135,11 +146,14 @@ router.delete(
 
     await Promise.all(
       repoSnapshot.docs.map((document) =>
-        deleteDocsByQuery(
-          getCollection('chat_messages')
-            .where('scopeType', '==', 'repo' satisfies ChatMessage['scopeType'])
-            .where('scopeId', '==', document.id)
-        )
+        Promise.all([
+          deleteDocsByQuery(
+            getCollection('chat_messages')
+              .where('scopeType', '==', 'repo' satisfies ChatMessage['scopeType'])
+              .where('scopeId', '==', document.id)
+          ),
+          deleteDocsByQuery(getCollection('repo_files').where('repoId', '==', document.id)),
+        ])
       )
     );
     await deleteDocsByQuery(

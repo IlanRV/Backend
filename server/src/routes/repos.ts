@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { asyncHandler, createHttpError, getRouteParam } from '../lib/http';
 import { deleteDoc, deleteDocsByQuery, getCollection, getDoc, setDoc } from '../lib/firebase';
 import { createLogger } from '../lib/logger';
+import { getRepoFile } from '../lib/repoFiles';
 import { toApiRepo } from '../lib/repoResponse';
 import { ChatMessage, Repo, Workspace } from '../types';
 
@@ -123,6 +124,7 @@ router.delete(
         .where('scopeType', '==', 'repo' satisfies ChatMessage['scopeType'])
         .where('scopeId', '==', repo.repoId)
     );
+    await deleteDocsByQuery(getCollection('repo_files').where('repoId', '==', repo.repoId));
     await deleteDoc('repos', repo.repoId);
 
     logger.info('repo_deleted', {
@@ -209,6 +211,37 @@ router.post(
       workspaceId: repo.workspaceId,
     });
     res.json(toApiRepo(nextRepo));
+  })
+);
+
+router.get(
+  '/repos/:id/file',
+  asyncHandler(async (req, res) => {
+    const repoId = getRouteParam(req, 'id');
+    const repo = await getDoc<Repo>('repos', repoId);
+
+    if (!repo) {
+      throw createHttpError(404, 'Repo not found');
+    }
+
+    const path = typeof req.query.path === 'string' ? req.query.path : '';
+
+    if (!isNonEmptyString(path)) {
+      throw createHttpError(400, 'path query parameter is required');
+    }
+
+    const repoFile = await getRepoFile(repo.repoId, path);
+
+    if (!repoFile) {
+      throw createHttpError(404, 'File content has not been cached for this repo yet');
+    }
+
+    res.json({
+      path: repoFile.path,
+      content: repoFile.content,
+      size: repoFile.size,
+      updatedAt: repoFile.updatedAt,
+    });
   })
 );
 

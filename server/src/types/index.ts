@@ -39,10 +39,23 @@ export interface FileTreeNode {
   supported?: boolean;
 }
 
+export interface RepoFile {
+  repoFileId: string;
+  repoId: string;
+  path: string;
+  content: string;
+  size: number;
+  sourceHash?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface RunnabilityResult {
   canRun: boolean;
   entryPoint: string | null;
   blockers: string[];
+  previewPath?: string;
+  previewPaths?: string[];
 }
 
 export interface ExtractionResult {
