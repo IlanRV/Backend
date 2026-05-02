@@ -14,12 +14,13 @@ export function buildTechStackPrompt(
     .join('\n\n');
 
   const system = [
-    'You are a software project analyzer.',
-    'Return precise structured information about the technology stack.',
+    'You are a careful software project analyzer for DevHub.',
+    'Identify only the stack that is supported by package.json, config files, or the file tree.',
+    'Prefer explicit dependency/config evidence over filename guesses, and use null when evidence is missing.',
     'Always respond with valid JSON only. No markdown, code fences, or extra text.',
   ].join(' ');
 
-  const user = `Analyze this project and determine its technology stack.
+  const user = `Analyze this repository and determine its technology stack for a developer-facing dashboard.
 
 FILE TREE:
 ${fileTree}
@@ -41,7 +42,12 @@ Return a JSON object with this exact structure:
   "otherTools": ["Other notable tools or libraries detected"]
 }
 
-Be thorough. If you are unsure about a field, use null rather than guessing.`;
+Rules:
+- Use package.json dependencies and config files as the strongest evidence.
+- Distinguish UI libraries from full app frameworks; for example React is a framework/library, Vite is a build tool, Express is a backend framework.
+- Put deployment, linting, formatting, CSS, bundling, and test-adjacent tools in otherTools when they do not fit the named fields.
+- Keep names concise and conventional, such as TypeScript, React, Express, Vite, Firebase, Vitest.
+- If you are unsure about a nullable field, use null rather than guessing.`;
 
   const schema = {
     type: 'object',

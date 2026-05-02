@@ -1,11 +1,34 @@
 import { ChatMessage, Repo, Workspace } from '../../types';
 
+function truncateText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, maxLength).trim()}...`;
+}
+
 function formatHistory(messages: ChatMessage[]): string {
   if (messages.length === 0) {
     return 'No prior conversation.';
   }
 
-  return messages.map((message) => `${message.role.toUpperCase()}: ${message.content}`).join('\n');
+  return messages
+    .slice(-12)
+    .map((message) => `${message.role.toUpperCase()}: ${truncateText(message.content, 1200)}`)
+    .join('\n');
+}
+
+function formatDependencies(dependencies: Record<string, string>): string {
+  const entries = Object.entries(dependencies);
+
+  if (entries.length === 0) {
+    return 'None detected';
+  }
+
+  const visibleDependencies = Object.fromEntries(entries.slice(0, 40));
+  const suffix = entries.length > 40 ? `\n...${entries.length - 40} more dependencies omitted` : '';
+  return `${JSON.stringify(visibleDependencies, null, 2)}${suffix}`;
 }
 
 function formatRepoAnalysis(repo: Repo): string {
@@ -15,6 +38,7 @@ function formatRepoAnalysis(repo: Repo): string {
 
   const { overview, techStack, functions, dependencies } = repo.analysis;
   const functionDocs = functions
+    .slice(0, 40)
     .map(
       (functionDoc) =>
         `- ${functionDoc.name} (${functionDoc.type}) in ${functionDoc.file}:${functionDoc.line}\n` +
@@ -40,9 +64,10 @@ function formatRepoAnalysis(repo: Repo): string {
     `- Testing framework: ${techStack.testingFramework || 'None detected'}`,
     `- Database: ${techStack.database || 'None detected'}`,
     `- Other tools: ${techStack.otherTools.length ? techStack.otherTools.join(', ') : 'None detected'}`,
-    `Dependencies: ${Object.keys(dependencies).length ? JSON.stringify(dependencies, null, 2) : 'None detected'}`,
+    `Dependencies: ${formatDependencies(dependencies)}`,
     `Functions:\n${functionDocs || 'No function docs extracted.'}`,
-    repo.aiReadme ? `AI README:\n${repo.aiReadme}` : '',
+    functions.length > 40 ? `Functions omitted from prompt: ${functions.length - 40}` : '',
+    repo.aiReadme ? `AI README excerpt:\n${truncateText(repo.aiReadme, 6000)}` : '',
   ]
     .filter(Boolean)
     .join('\n');
@@ -50,8 +75,10 @@ function formatRepoAnalysis(repo: Repo): string {
 
 export function buildRepoChatSystemPrompt(repo: Repo, messages: ChatMessage[]): string {
   return [
-    'You are a code expert assistant. You have access to the full source code of this repository through its extracted analysis.',
-    'Answer clearly and ground your response in the repository context. If the requested detail is not present in the extracted analysis, say what is missing and suggest where to inspect next.',
+    'You are DevHub, a practical code expert assistant for repository exploration.',
+    'Use only the extracted repository context below. You do not have live access to files beyond this context.',
+    'Answer directly, cite relevant file paths or function names when useful, and separate confirmed facts from cautious inferences.',
+    'If the requested detail is missing from the extracted analysis, say what is missing and suggest the specific file or area to inspect next.',
     'Repository context:',
     formatRepoAnalysis(repo),
     'Recent conversation history:',
@@ -65,8 +92,10 @@ export function buildWorkspaceChatSystemPrompt(
   messages: ChatMessage[]
 ): string {
   return [
-    'You are a code expert. You have access to ALL repositories in this workspace through their extracted analyses.',
-    'Compare repositories when useful, explain relationships between services, and be explicit when analysis data is incomplete.',
+    'You are DevHub, a practical code expert assistant for multi-repository workspaces.',
+    'Use only the extracted workspace context below. You do not have live access to files beyond this context.',
+    'Compare repositories when useful, explain likely relationships between services, and be explicit when analysis data is incomplete.',
+    'Answer with concrete next steps when the user is asking how to debug, run, extend, or understand the workspace.',
     `Workspace: ${workspace.name}`,
     `Description: ${workspace.description}`,
     'Repository contexts:',

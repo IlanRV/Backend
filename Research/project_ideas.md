@@ -16,7 +16,7 @@ These exploit BrowserPod 2.0 features (git, bash, AI) that **zero showcase proje
 
 **How it works**:
 1. User describes what they want in natural language
-2. Frontend calls OpenAI/Anthropic/Gemini API with the prompt
+2. Frontend calls a configured OpenRouter model, such as DeepSeek, with the prompt
 3. AI generates code → written to pod via `pod.createFile()`
 4. Pod runs `npm install` + `node main.js`
 5. Portal shows the live result in an iframe

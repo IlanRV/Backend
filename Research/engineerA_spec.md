@@ -64,7 +64,7 @@ server/
 ```
 PORT=3001
 OPENROUTER_API_KEY=sk-or-v1-xxxxx
-OPENROUTER_MODEL=anthropic/claude-sonnet-4
+OPENROUTER_MODEL=deepseek/deepseek-v4-flash
 FIREBASE_PROJECT_ID=your-firebase-project-id
 FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
 FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xxxxx@your-project.iam.gserviceaccount.com
@@ -486,7 +486,7 @@ export const config = {
   },
   openrouter: {
     apiKey: process.env.OPENROUTER_API_KEY!,
-    model: process.env.OPENROUTER_MODEL || 'anthropic/claude-sonnet-4',
+    model: process.env.OPENROUTER_MODEL || 'deepseek/deepseek-v4-flash',
   },
 };
 ```

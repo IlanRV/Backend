@@ -44,7 +44,7 @@ server/src/ai/
 | Runtime | Node.js 22 |
 | Language | TypeScript |
 | AI API | OpenRouter (`https://openrouter.ai/api/v1/chat/completions`) |
-| Model | `anthropic/claude-sonnet-4` (default, configurable) |
+| Model | `deepseek/deepseek-v4-flash` through OpenRouter |
 | Database | Firebase Firestore (Engineer A provides helper functions) |
 
 ---
@@ -54,7 +54,7 @@ server/src/ai/
 The `.env` file is shared with Engineer A. You only need:
 ```
 OPENROUTER_API_KEY=sk-or-v1-xxxxx
-OPENROUTER_MODEL=anthropic/claude-sonnet-4
+OPENROUTER_MODEL=deepseek/deepseek-v4-flash
 ```
 
 These are accessed via `config.openrouter.apiKey` and `config.openrouter.model` from `../config.ts` (Engineer A builds this).
@@ -115,7 +115,7 @@ export async function setDoc(collection: string, id: string, data: any): Promise
 export const config = {
   openrouter: {
     apiKey: string,
-    model: string, // e.g., 'anthropic/claude-sonnet-4'
+    model: string, // deepseek/deepseek-v4-flash
   },
 };
 ```

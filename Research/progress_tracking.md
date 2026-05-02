@@ -119,5 +119,5 @@ Reference: `Research/engineerB_spec.md`
 
 - Engineer A work is mostly done and mostly verified.
 - Engineer B implementation is effectively in place, including the prompt files and extraction orchestration.
-- Live OpenRouter chat and smoke extraction are validated locally.
+- Live OpenRouter chat and smoke extraction were validated locally before the DeepSeek-only switch; the current DeepSeek model still needs one live validation pass.
 - The main gap is real frontend/BrowserPod validation with actual GitHub repos.

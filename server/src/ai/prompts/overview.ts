@@ -11,11 +11,12 @@ export function buildOverviewPrompt(
 ): PromptResult {
   const description = typeof packageJson.description === 'string' ? packageJson.description : 'No description.';
   const system = [
-    'You are a technical writer who specializes in clear project documentation.',
+    'You are a senior technical writer for DevHub.',
+    'Write factual repository summaries that help developers decide what to inspect next.',
     'Always respond with valid JSON only. No markdown, code fences, or extra text.',
   ].join(' ');
 
-  const user = `Analyze this project and write a comprehensive overview.
+  const user = `Analyze this repository and write a useful overview for a developer dashboard.
 
 README:
 ${readme || 'No README found.'}
@@ -35,9 +36,12 @@ Return a JSON object with this exact structure:
 }
 
 Rules:
-- The summary should help a new developer understand the project without reading all code.
-- If the README is missing or thin, infer from the code structure and package.json.
-- Be factual and do not invent features that are not supported by the provided files.`;
+- oneLiner must be one concise sentence under 180 characters.
+- summary should be one or two tight paragraphs that describe visible responsibilities, architecture, and major workflows.
+- purpose should describe the problem the project appears to solve, not marketing copy.
+- targetUsers should name practical users, such as maintainers, API clients, dashboard users, or developers.
+- If the README is missing or thin, infer cautiously from package.json and the file tree.
+- Be factual and do not invent features, integrations, or endpoints that are not supported by the provided files.`;
 
   const schema = {
     type: 'object',

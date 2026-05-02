@@ -29,9 +29,26 @@ firebase deploy --only firestore:rules,firestore:indexes
 Copy `.env.example` to `.env` and fill in:
 
 - `OPENROUTER_API_KEY`
+- `OPENROUTER_MODEL` (the primary model for extraction and chat)
+- `OPENROUTER_STRICT_JSON_SCHEMA` (defaults to `false`; prompt-only JSON mode avoids an extra failed schema call on models that do not support strict schema response format)
 - `FIREBASE_PROJECT_ID`
 - `FIREBASE_PRIVATE_KEY`
 - `FIREBASE_CLIENT_EMAIL`
+
+This project is currently configured for DeepSeek only through OpenRouter:
+
+```env
+OPENROUTER_MODEL=deepseek/deepseek-v4-flash
+OPENROUTER_FALLBACK_MODELS=
+OPENROUTER_RETRY_COUNT=0
+OPENROUTER_STRICT_JSON_SCHEMA=false
+```
+
+Non-DeepSeek `OPENROUTER_MODEL` values are ignored by the backend config guard and replaced with `deepseek/deepseek-v4-flash`. Fallback models are also filtered to `deepseek/*` model IDs only.
+
+If the model is rate-limited or unavailable, the backend falls back to local heuristic extraction, skips repeated AI calls while the model cools down, and returns a friendly degraded chat reply instead of a raw 500. Route-level extraction idempotency also prevents duplicate POSTs for the same repo source payload from starting a second paid extraction job.
+
+Function documentation extraction uses source-file chunks before merging and deduplicating results. Keep chunk limits conservative because each chunk is one model call.
 
 The health endpoint works without Firebase credentials, but CRUD/chat routes need Firestore configured.
 

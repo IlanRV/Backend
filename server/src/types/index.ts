@@ -14,6 +14,10 @@ export interface Repo {
   status: 'cloning' | 'analyzing' | 'ready' | 'running' | 'error';
   runnability: RunnabilityResult | null;
   analysis: ExtractionResult | null;
+  analysisSourceHash?: string;
+  analysisStartedAt?: string;
+  analysisUpdatedAt?: string;
+  analysisModel?: string | null;
   aiReadme: string | null;
   portalUrl: string | null;
   createdAt: string;
