@@ -211,6 +211,56 @@ describe('backend routes', () => {
     await request(app).get(`/api/workspaces/${created.body.workspaceId}`).expect(404);
   });
 
+  it('returns workspaces in creation order with repo counts', async () => {
+    await setDoc('workspaces', 'workspace-later', workspace({
+      workspaceId: 'workspace-later',
+      name: 'Later',
+      createdAt: '2026-05-02T00:00:02.000Z',
+    }));
+    await setDoc('workspaces', 'workspace-earlier', workspace({
+      workspaceId: 'workspace-earlier',
+      name: 'Earlier',
+      createdAt: '2026-05-02T00:00:01.000Z',
+    }));
+    await setDoc('repos', 'repo-1', repo({ workspaceId: 'workspace-earlier' }));
+
+    const response = await request(app).get('/api/workspaces').expect(200);
+
+    expect(response.body.map((item: any) => item.name)).toEqual(['Earlier', 'Later']);
+    expect(response.body[0].repoCount).toBe(1);
+    expect(response.body[1].repoCount).toBe(0);
+  });
+
+  it('deletes workspace repos plus repo and workspace scoped cached data', async () => {
+    await setDoc('workspaces', 'workspace-1', workspace());
+    await setDoc('repos', 'repo-1', repo());
+    await setDoc('chat_messages', 'workspace-message', {
+      messageId: 'workspace-message',
+      scopeType: 'workspace',
+      scopeId: 'workspace-1',
+      role: 'user',
+      content: 'workspace chat',
+      timestamp: '1',
+    });
+    await setDoc('chat_messages', 'repo-message', {
+      messageId: 'repo-message',
+      scopeType: 'repo',
+      scopeId: 'repo-1',
+      role: 'user',
+      content: 'repo chat',
+      timestamp: '2',
+    });
+    await setDoc('repo_files', 'file-1', { repoFileId: 'file-1', repoId: 'repo-1', path: 'src/index.ts' });
+
+    await request(app).delete('/api/workspaces/workspace-1').expect(200);
+
+    expect(await getDoc('workspaces', 'workspace-1')).toBeNull();
+    expect(await getDoc('repos', 'repo-1')).toBeNull();
+    expect(await getDoc('chat_messages', 'workspace-message')).toBeNull();
+    expect(await getDoc('chat_messages', 'repo-message')).toBeNull();
+    expect(await getDoc('repo_files', 'file-1')).toBeNull();
+  });
+
   it('validates workspace creation and enforces the workspace limit', async () => {
     await request(app).post('/api/workspaces').send({ name: '', description: '' }).expect(400);
 
@@ -307,6 +357,35 @@ describe('backend routes', () => {
     expect(extraction.body).toMatchObject({ success: true, extractionId: 'repo-1', status: 'analyzing', aiReadmeStatus: 'pending' });
   });
 
+  it('validates extraction requests and missing repos', async () => {
+    await request(app)
+      .post('/api/ai/extract/missing')
+      .send({ files: [{ path: 'src/index.ts', content: 'export {}' }] })
+      .expect(404);
+
+    await setDoc('repos', 'repo-1', repo());
+
+    await request(app).post('/api/ai/extract/repo-1').send({ files: [] }).expect(400);
+    await request(app).post('/api/ai/extract/repo-1').send({ files: [{ path: '', content: 'x' }] }).expect(400);
+  });
+
+  it('marks repos as error when background extraction rejects', async () => {
+    aiMocks.extractAll.mockRejectedValueOnce(new Error('extract failed'));
+    await setDoc('repos', 'repo-error', repo({ repoId: 'repo-error' }));
+
+    await request(app)
+      .post('/api/ai/extract/repo-error')
+      .send({ files: [{ path: 'src/index.ts', content: 'export function fail() {}' }] })
+      .expect(202);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(await getDoc('repos', 'repo-error')).toMatchObject({
+      status: 'error',
+      aiReadmeStatus: 'error',
+      analysisError: 'extract failed',
+    });
+  });
+
   it('serves cached repo files', async () => {
     await setDoc('repos', 'repo-1', repo());
     await request(app)
@@ -355,6 +434,16 @@ describe('backend routes', () => {
 
     const history = await request(app).get('/api/chat/repo/repo-1').expect(200);
     expect(history.body.map((message: any) => message.role)).toEqual(['user', 'assistant']);
+  });
+
+  it('validates chat requests and missing chat scopes', async () => {
+    await request(app).post('/api/chat/repo/missing').send({ message: 'Hi' }).expect(404);
+    await setDoc('repos', 'repo-1', repo());
+    await request(app).post('/api/chat/repo/repo-1').send({ message: '' }).expect(400);
+
+    await request(app).post('/api/chat/workspace/missing').send({ message: 'Hi' }).expect(404);
+    await setDoc('workspaces', 'workspace-1', workspace());
+    await request(app).post('/api/chat/workspace/workspace-1').send({ message: '' }).expect(400);
   });
 
   it('degrades chat when OpenRouter fails', async () => {

@@ -116,4 +116,39 @@ describe('OpenRouter client', () => {
     expect(result).toEqual({ reply: 'ok' });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it('tries a fallback model when the primary model is rate-limited', async () => {
+    const config = {
+      ...baseConfig,
+      openrouter: {
+        ...baseConfig.openrouter,
+        apiKey: 'test-key',
+        model: 'deepseek/primary',
+        fallbackModels: ['deepseek/fallback'],
+      },
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        text: async () => JSON.stringify({ error: { message: 'Rate limited', code: 429 } }),
+        headers: new Headers({ 'retry-after': '1' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: 'fallback reply' } }] }),
+        headers: new Headers(),
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const openrouter = await loadOpenRouter(config);
+    const reply = await openrouter.callOpenRouter('user', 'system');
+
+    const firstBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    const secondBody = JSON.parse(fetchMock.mock.calls[1][1].body as string);
+    expect(reply).toBe('fallback reply');
+    expect(firstBody.model).toBe('deepseek/primary');
+    expect(secondBody.model).toBe('deepseek/fallback');
+  });
 });
