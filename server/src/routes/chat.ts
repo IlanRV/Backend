@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { callOpenRouter, formatOpenRouterFailure, isOpenRouterFailure } from '../ai/openrouter';
+import { callOpenRouter } from '../ai/openrouter';
 import { buildRepoChatSystemPrompt, buildWorkspaceChatSystemPrompt } from '../ai/prompts/chatContext';
 import { getCollection, getDoc, setDoc } from '../lib/firebase';
 import { asyncHandler, createHttpError, getRouteParam } from '../lib/http';
+import { createLogger } from '../lib/logger';
 import { ChatMessage, Repo, Workspace } from '../types';
 
 const router = Router();
+const logger = createLogger('routes-chat');
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
@@ -49,50 +51,14 @@ async function saveChatMessage(message: Omit<ChatMessage, 'messageId' | 'timesta
   };
 
   await setDoc('chat_messages', chatMessage.messageId, chatMessage);
+  logger.debug('chat_message_saved', {
+    messageId: chatMessage.messageId,
+    scopeType: chatMessage.scopeType,
+    scopeId: chatMessage.scopeId,
+    role: chatMessage.role,
+    contentLength: chatMessage.content.length,
+  });
   return chatMessage;
-}
-
-function buildRepoFallbackReply(repo: Repo, reason: string): string {
-  const context = repo.analysis
-    ? [
-        `I still have the saved extraction for ${repo.name}: ${repo.analysis.overview.oneLiner}`,
-        `Detected stack: ${repo.analysis.techStack.language}${repo.analysis.techStack.framework ? ` / ${repo.analysis.techStack.framework}` : ''}.`,
-        `Documented symbols: ${repo.analysis.functions.length}.`,
-      ].join(' ')
-    : `No completed extraction is available for ${repo.name} yet.`;
-
-  return [
-    'The AI model is temporarily unavailable, so I cannot generate a fresh answer right now.',
-    reason,
-    context,
-    'Try again shortly, or switch OPENROUTER_MODEL to an available DeepSeek model for smoother chat.',
-  ].join('\n\n');
-}
-
-function buildWorkspaceFallbackReply(workspace: Workspace, repos: Repo[], reason: string): string {
-  const readyRepos = repos.filter((repo) => repo.analysis).length;
-
-  return [
-    'The AI model is temporarily unavailable, so I cannot generate a fresh workspace answer right now.',
-    reason,
-    `${workspace.name} currently has ${repos.length} repos, with ${readyRepos} completed extractions available for future chat context.`,
-    'Try again shortly, or switch OPENROUTER_MODEL to an available DeepSeek model for smoother chat.',
-  ].join('\n\n');
-}
-
-function getDuplicateCachedReply(messages: ChatMessage[], content: string): string | null {
-  const previousUserMessage = messages[messages.length - 2];
-  const previousAssistantMessage = messages[messages.length - 1];
-
-  if (
-    previousUserMessage?.role === 'user' &&
-    previousAssistantMessage?.role === 'assistant' &&
-    previousUserMessage.content.trim() === content
-  ) {
-    return previousAssistantMessage.content;
-  }
-
-  return null;
 }
 
 router.post(
@@ -111,40 +77,21 @@ router.post(
       throw createHttpError(404, 'Repo not found');
     }
 
-    const trimmedMessage = message.trim();
     const history = await getLastMessages('repo', repo.repoId);
-    const cachedReply = getDuplicateCachedReply(history, trimmedMessage);
-
-    if (cachedReply) {
-      res.json({ reply: cachedReply, degraded: false, cached: true });
-      return;
-    }
-
     const systemPrompt = buildRepoChatSystemPrompt(repo, history);
+    logger.info('repo_chat_requested', {
+      repoId: repo.repoId,
+      historyCount: history.length,
+      messageLength: message.trim().length,
+    });
+    const reply = await callOpenRouter(message.trim(), systemPrompt);
 
     await saveChatMessage({
       scopeType: 'repo',
       scopeId: repo.repoId,
       role: 'user',
-      content: trimmedMessage,
+      content: message.trim(),
     });
-
-    let degraded = false;
-    let reply: string;
-
-    try {
-      reply = await callOpenRouter(trimmedMessage, systemPrompt);
-    } catch (error) {
-      if (!isOpenRouterFailure(error)) {
-        throw error;
-      }
-
-      degraded = true;
-      const reason = formatOpenRouterFailure(error);
-      console.warn(`[Chat] Repo chat degraded for ${repo.repoId}: ${reason}`);
-      reply = buildRepoFallbackReply(repo, reason);
-    }
-
     await saveChatMessage({
       scopeType: 'repo',
       scopeId: repo.repoId,
@@ -152,7 +99,11 @@ router.post(
       content: reply,
     });
 
-    res.json({ reply, degraded });
+    logger.info('repo_chat_replied', {
+      repoId: repo.repoId,
+      replyLength: reply.length,
+    });
+    res.json({ reply });
   })
 );
 
@@ -166,7 +117,12 @@ router.get(
       throw createHttpError(404, 'Repo not found');
     }
 
-    res.json(await getMessages('repo', repo.repoId));
+    const messages = await getMessages('repo', repo.repoId);
+    logger.debug('repo_chat_history_returned', {
+      repoId: repo.repoId,
+      messageCount: messages.length,
+    });
+    res.json(messages);
   })
 );
 
@@ -193,40 +149,22 @@ router.post(
       ...(document.data() as Repo),
       repoId: document.id,
     })).sort((left, right) => left.createdAt.localeCompare(right.createdAt));
-    const trimmedMessage = message.trim();
     const history = await getLastMessages('workspace', workspace.workspaceId);
-    const cachedReply = getDuplicateCachedReply(history, trimmedMessage);
-
-    if (cachedReply) {
-      res.json({ reply: cachedReply, degraded: false, cached: true });
-      return;
-    }
-
     const systemPrompt = buildWorkspaceChatSystemPrompt(workspace, repos, history);
+    logger.info('workspace_chat_requested', {
+      workspaceId: workspace.workspaceId,
+      repoCount: repos.length,
+      historyCount: history.length,
+      messageLength: message.trim().length,
+    });
+    const reply = await callOpenRouter(message.trim(), systemPrompt);
 
     await saveChatMessage({
       scopeType: 'workspace',
       scopeId: workspace.workspaceId,
       role: 'user',
-      content: trimmedMessage,
+      content: message.trim(),
     });
-
-    let degraded = false;
-    let reply: string;
-
-    try {
-      reply = await callOpenRouter(trimmedMessage, systemPrompt);
-    } catch (error) {
-      if (!isOpenRouterFailure(error)) {
-        throw error;
-      }
-
-      degraded = true;
-      const reason = formatOpenRouterFailure(error);
-      console.warn(`[Chat] Workspace chat degraded for ${workspace.workspaceId}: ${reason}`);
-      reply = buildWorkspaceFallbackReply(workspace, repos, reason);
-    }
-
     await saveChatMessage({
       scopeType: 'workspace',
       scopeId: workspace.workspaceId,
@@ -234,7 +172,11 @@ router.post(
       content: reply,
     });
 
-    res.json({ reply, degraded });
+    logger.info('workspace_chat_replied', {
+      workspaceId: workspace.workspaceId,
+      replyLength: reply.length,
+    });
+    res.json({ reply });
   })
 );
 
@@ -247,7 +189,12 @@ router.get(
     if (!workspace) {
       throw createHttpError(404, 'Workspace not found');
     }
-    res.json(await getMessages('workspace', workspace.workspaceId));
+    const messages = await getMessages('workspace', workspace.workspaceId);
+    logger.debug('workspace_chat_history_returned', {
+      workspaceId: workspace.workspaceId,
+      messageCount: messages.length,
+    });
+    res.json(messages);
   })
 );
 

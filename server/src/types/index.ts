@@ -13,6 +13,7 @@ export interface Repo {
   githubUrl: string;
   status: 'cloning' | 'analyzing' | 'ready' | 'running' | 'error';
   runnability: RunnabilityResult | null;
+  fileTree?: FileTreeNode | null;
   analysis: ExtractionResult | null;
   analysisSourceHash?: string;
   analysisStartedAt?: string;
@@ -21,6 +22,16 @@ export interface Repo {
   aiReadme: string | null;
   portalUrl: string | null;
   createdAt: string;
+}
+
+export interface FileTreeNode {
+  name: string;
+  path: string;
+  type: 'file' | 'directory';
+  children?: FileTreeNode[];
+  extension?: string;
+  size?: number;
+  supported?: boolean;
 }
 
 export interface RunnabilityResult {

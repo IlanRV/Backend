@@ -1,14 +1,12 @@
 import { Router } from 'express';
-import { createHash } from 'crypto';
-import { config } from '../config';
 import { extractAll, type ExtractionFile } from '../ai/extraction';
 import { getDoc, setDoc } from '../lib/firebase';
 import { asyncHandler, createHttpError, getRouteParam } from '../lib/http';
-import type { Repo } from '../types';
+import { createLogger } from '../lib/logger';
+import type { FileTreeNode, Repo } from '../types';
 
 const router = Router();
-const activeExtractions = new Map<string, string>();
-const staleAnalysisMs = 15 * 60 * 1000;
+const logger = createLogger('routes-ai');
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -46,6 +44,44 @@ function collectTreePaths(node: unknown, output: string[]): void {
   }
 }
 
+function normalizeFileTreeNode(value: unknown): FileTreeNode | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const name = typeof value.name === 'string' ? value.name : null;
+  const path = typeof value.path === 'string' ? value.path : null;
+  const type = value.type === 'file' || value.type === 'directory' ? value.type : null;
+
+  if (!name || path === null || !type) {
+    return null;
+  }
+
+  const children = Array.isArray(value.children)
+    ? value.children
+        .map((child) => normalizeFileTreeNode(child))
+        .filter((child): child is FileTreeNode => Boolean(child))
+    : undefined;
+
+  return {
+    name,
+    path,
+    type,
+    children,
+    extension: typeof value.extension === 'string' ? value.extension : undefined,
+    size: typeof value.size === 'number' ? value.size : undefined,
+    supported: typeof value.supported === 'boolean' ? value.supported : undefined,
+  };
+}
+
+function getStructuredFileTree(body: unknown): FileTreeNode | null {
+  if (!isRecord(body) || !isRecord(body.fileTree)) {
+    return null;
+  }
+
+  return normalizeFileTreeNode(body.fileTree);
+}
+
 function getRequestFileTree(body: unknown, files: ExtractionFile[]): string {
   if (!isRecord(body)) {
     return files.map((file) => file.path).join('\n');
@@ -67,33 +103,6 @@ function getRequestFileTree(body: unknown, files: ExtractionFile[]): string {
   return files.map((file) => file.path).sort((left, right) => left.localeCompare(right)).join('\n');
 }
 
-function createExtractionSourceHash(fileTree: string, files: ExtractionFile[]): string {
-  const hash = createHash('sha256');
-  hash.update(fileTree);
-
-  for (const file of [...files].sort((left, right) => left.path.localeCompare(right.path))) {
-    hash.update('\0');
-    hash.update(file.path);
-    hash.update('\0');
-    hash.update(file.content);
-  }
-
-  return hash.digest('hex');
-}
-
-function isFreshAnalyzing(repo: Repo): boolean {
-  if (repo.status !== 'analyzing') {
-    return false;
-  }
-
-  if (!repo.analysisStartedAt) {
-    return true;
-  }
-
-  const startedAt = Date.parse(repo.analysisStartedAt);
-  return Number.isFinite(startedAt) && Date.now() - startedAt < staleAnalysisMs;
-}
-
 router.post(
   '/extract/:repoId',
   asyncHandler(async (req, res) => {
@@ -106,42 +115,33 @@ router.post(
 
     const files = getRequestFiles(req.body);
     const fileTree = getRequestFileTree(req.body, files);
-    const sourceHash = createExtractionSourceHash(fileTree, files);
+    const structuredFileTree = getStructuredFileTree(req.body);
 
-    if (activeExtractions.has(repo.repoId) || isFreshAnalyzing(repo)) {
-      res.status(202).json({ success: true, extractionId: repo.repoId, status: 'analyzing', deduped: true });
-      return;
+    logger.info('ai_extraction_requested', {
+      repoId: repo.repoId,
+      repoName: repo.name,
+      fileCount: files.length,
+      fileTreeLineCount: fileTree.split('\n').filter(Boolean).length,
+    });
+
+    const repoUpdate: Partial<Repo> = { status: 'analyzing' };
+
+    if (structuredFileTree) {
+      repoUpdate.fileTree = structuredFileTree;
     }
 
-    if (repo.analysis && repo.aiReadme && repo.analysisSourceHash === sourceHash) {
-      res.json({ success: true, extractionId: repo.repoId, status: repo.status, cached: true });
-      return;
-    }
+    await setDoc('repos', repo.repoId, repoUpdate, { merge: true });
 
-    activeExtractions.set(repo.repoId, sourceHash);
-
-    await setDoc(
-      'repos',
-      repo.repoId,
-      {
-        status: 'analyzing' satisfies Repo['status'],
-        analysisSourceHash: sourceHash,
-        analysisStartedAt: new Date().toISOString(),
-        analysisModel: config.openrouter.apiKey ? config.openrouter.model : null,
-      },
-      { merge: true }
-    );
-
-    void extractAll(repo.repoId, repo.name, fileTree, files, { sourceHash })
+    void extractAll(repo.repoId, repo.name, fileTree, files)
       .then((result) => {
-        console.log(`[AI Route] Extraction complete for repo ${repo.repoId}: ${result.analysis.functions.length} symbols`);
+        logger.info('ai_extraction_background_completed', {
+          repoId: repo.repoId,
+          functionCount: result.analysis.functions.length,
+        });
       })
       .catch((error: unknown) => {
-        console.error(`[AI Route] Extraction failed for repo ${repo.repoId}:`, error);
+        logger.error('ai_extraction_background_failed', { repoId: repo.repoId, error });
         void setDoc('repos', repo.repoId, { status: 'error' satisfies Repo['status'] }, { merge: true });
-      })
-      .finally(() => {
-        activeExtractions.delete(repo.repoId);
       });
 
     res.status(202).json({ success: true, extractionId: repo.repoId, status: 'analyzing' });
@@ -157,6 +157,13 @@ router.get(
     if (!repo) {
       throw createHttpError(404, 'Repo not found');
     }
+
+    logger.debug('ai_extraction_result_requested', {
+      repoId,
+      status: repo.status,
+      hasAnalysis: Boolean(repo.analysis),
+      hasAiReadme: Boolean(repo.aiReadme),
+    });
 
     res.json({
       status: repo.status,

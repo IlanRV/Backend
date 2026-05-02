@@ -1,17 +1,19 @@
-import type { FunctionDoc, Overview, RunnabilityResult, TechStack } from '../../types';
+import type { FunctionDoc, Overview, TechStack } from '../../types';
+import { createLogger } from '../../lib/logger';
 
 interface PromptResult {
   system: string;
   user: string;
 }
 
+const logger = createLogger('prompt-ai-readme');
+
 export function buildAiReadmePrompt(
   techStack: TechStack,
   overview: Overview,
   functions: FunctionDoc[],
   dependencies: Record<string, string>,
-  repoName: string,
-  runnability: RunnabilityResult
+  repoName: string
 ): PromptResult {
   const functionsText = functions
     .map((item) => `- \`${item.signature}\` in \`${item.file}\`:${item.line} - ${item.description}`)
@@ -20,9 +22,17 @@ export function buildAiReadmePrompt(
     .map(([name, version]) => `- \`${name}\`: \`${version}\``)
     .join('\n');
 
+  logger.debug('ai_readme_prompt_built', {
+    repoName,
+    functionCount: functions.length,
+    dependencyCount: Object.keys(dependencies).length,
+    language: techStack.language,
+    framework: techStack.framework,
+    overviewLength: overview.summary.length,
+  });
+
   const system = [
-    'You are a senior developer who writes practical README documentation for real repositories.',
-    'Favor concrete repository evidence over generic boilerplate.',
+    'You are a senior developer who writes exceptional README documentation.',
     'Respond in clean, well-formatted Markdown.',
     'Do not wrap your response in code fences. Return raw markdown only.',
   ].join(' ');
@@ -49,11 +59,6 @@ ${functionsText || 'No functions documented.'}
 
 DEPENDENCIES:
 ${depsText || 'No dependencies found.'}
-
-RUNNABILITY:
-- Can run in BrowserPod: ${runnability.canRun ? 'yes' : 'no'}
-- Entry point: ${runnability.entryPoint || 'None detected'}
-- Blockers: ${runnability.blockers.join('; ') || 'None detected'}
 
 Write a README.md with these sections, in this order:
 
@@ -89,10 +94,8 @@ Note that the license should be confirmed by the project maintainer.
 Rules:
 - Be specific, not generic.
 - Reference actual function names, file paths, and dependencies.
-- Include exact setup and run commands only when they can be inferred from the available data.
-- If BrowserPod runnability has blockers, explain them plainly in Setup Instructions.
-- Do not list environment variables unless they are strongly implied by code, config names, or dependency usage.
-- If information is missing, infer cautiously and say what maintainers should confirm.
+- Include exact commands that work when they can be inferred.
+- If information is missing, infer cautiously and say when maintainers should confirm it.
 - Do not invent unsupported features.`;
 
   return { system, user };

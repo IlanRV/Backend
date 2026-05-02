@@ -1,8 +1,12 @@
+import { createLogger } from '../../lib/logger';
+
 interface PromptResult {
   system: string;
   user: string;
   schema: object;
 }
+
+const logger = createLogger('prompt-overview');
 
 export function buildOverviewPrompt(
   readme: string,
@@ -10,6 +14,11 @@ export function buildOverviewPrompt(
   fileTree: string
 ): PromptResult {
   const description = typeof packageJson.description === 'string' ? packageJson.description : 'No description.';
+  logger.debug('overview_prompt_built', {
+    hasReadme: readme.length > 0,
+    hasPackageDescription: description !== 'No description.',
+    fileTreeLineCount: fileTree.split('\n').filter(Boolean).length,
+  });
   const system = [
     'You are a senior technical writer for DevHub.',
     'Write factual repository summaries that help developers decide what to inspect next.',

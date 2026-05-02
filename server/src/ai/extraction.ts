@@ -1,17 +1,12 @@
 import { config } from '../config';
 import { getDoc, setDoc } from '../lib/firebase';
+import { createLogger } from '../lib/logger';
 import type { ExtractionResult, FunctionDoc, Overview, RunnabilityResult, TechStack } from '../types';
-import {
-  callOpenRouter,
-  callOpenRouterStructured,
-  formatOpenRouterFailure,
-  isOpenRouterFailure,
-} from './openrouter';
+import { callOpenRouter, callOpenRouterStructured } from './openrouter';
 import { buildAiReadmePrompt } from './prompts/aiReadme';
-import { buildFunctionPromptChunks } from './prompts/functions';
+import { buildFunctionsPrompt } from './prompts/functions';
 import { buildOverviewPrompt } from './prompts/overview';
 import { buildTechStackPrompt } from './prompts/techStack';
-import { functionsResponseSchema, overviewResponseSchema, techStackResponseSchema } from './schemas';
 
 export interface ExtractionFile {
   path: string;
@@ -22,10 +17,6 @@ export interface ExtractAllResult {
   analysis: ExtractionResult;
   aiReadme: string;
   runnability: RunnabilityResult;
-}
-
-export interface ExtractAllOptions {
-  sourceHash?: string;
 }
 
 interface PackageMetadata {
@@ -54,6 +45,7 @@ const nativeDependencyBlocklist = [
   'sqlite3',
 ];
 const runScriptPriority = ['dev', 'start', 'serve'] as const;
+const logger = createLogger('ai-extraction');
 const configFileMatchers = [
   'tsconfig.json',
   '.eslintrc',
@@ -320,6 +312,10 @@ function buildFallbackAiReadme(
 }
 
 function buildFallbackExtraction(repoName: string, files: ExtractionFile[]): ExtractAllResult {
+  logger.debug('fallback_extraction_building', {
+    repoName,
+    fileCount: files.length,
+  });
   const packageMetadata = getPackageMetadata(files);
   const dependencies = { ...packageMetadata.dependencies, ...packageMetadata.devDependencies };
   const techStack = buildFallbackTechStack(files, packageMetadata);
@@ -359,66 +355,18 @@ function hasOpenRouterKey(): boolean {
 }
 
 async function repoStillExists(repoId: string): Promise<boolean> {
-  return Boolean(await getDoc('repos', repoId));
-}
-
-function describeAiStepFailure(step: string, error: unknown): string {
-  if (isOpenRouterFailure(error)) {
-    const reason = formatOpenRouterFailure(error);
-    console.warn(`[Extraction] ${step} unavailable; using local fallback. ${reason}`);
-    return reason;
-  }
-
-  console.error(`[Extraction] ${step} failed:`, error);
-  return `${step} failed after validation or parsing; using local fallback for the rest of this extraction.`;
-}
-
-function normalizeFunctionDocKey(value: string): string {
-  return value.toLowerCase().replace(/\s+/g, ' ').trim();
-}
-
-function functionDocKey(functionDoc: FunctionDoc): string {
-  return [
-    normalizeFunctionDocKey(functionDoc.file),
-    normalizeFunctionDocKey(functionDoc.name),
-    normalizeFunctionDocKey(functionDoc.signature),
-  ].join(':');
-}
-
-function functionDocQuality(functionDoc: FunctionDoc): number {
-  return (
-    functionDoc.description.length +
-    functionDoc.signature.length +
-    functionDoc.params.length * 20 +
-    functionDoc.throws.length * 10 +
-    functionDoc.dependencies.length * 10
-  );
-}
-
-function mergeFunctionDocs(primaryDocs: FunctionDoc[], fallbackDocs: FunctionDoc[], limit = 80): FunctionDoc[] {
-  const docsByKey = new Map<string, FunctionDoc>();
-
-  for (const functionDoc of [...primaryDocs, ...fallbackDocs]) {
-    const key = functionDocKey(functionDoc);
-    const existing = docsByKey.get(key);
-
-    if (!existing || functionDocQuality(functionDoc) > functionDocQuality(existing)) {
-      docsByKey.set(key, functionDoc);
-    }
-  }
-
-  return [...docsByKey.values()]
-    .sort((left, right) => left.file.localeCompare(right.file) || left.line - right.line || left.name.localeCompare(right.name))
-    .slice(0, limit);
+  const exists = Boolean(await getDoc('repos', repoId));
+  logger.debug('repo_existence_checked', { repoId, exists });
+  return exists;
 }
 
 export async function extractAll(
   repoId: string,
   repoName: string,
   fileTree: string,
-  files: ExtractionFile[],
-  options: ExtractAllOptions = {}
+  files: ExtractionFile[]
 ): Promise<ExtractAllResult> {
+  const startedAt = Date.now();
   const normalizedFileTree = fileTree.trim() || files.map((file) => file.path).join('\n');
   const fallback = buildFallbackExtraction(repoName, files);
   let techStack = fallback.analysis.techStack;
@@ -431,115 +379,76 @@ export async function extractAll(
   const packageJsonText = packageJsonFile?.content || '{}';
   const packageJson = parseJsonObject(packageJsonText);
   const readme = extractReadme(files) || '';
-  let aiUnavailableReason: string | null = null;
 
-  console.log(`[Extraction] Starting extraction for repo ${repoId} (${repoName})`);
-  console.log(`[Extraction] File tree: ${normalizedFileTree.split('\n').filter(Boolean).length} entries, ${files.length} files`);
+  logger.info('extraction_started', {
+    repoId,
+    repoName,
+    treeEntryCount: normalizedFileTree.split('\n').filter(Boolean).length,
+    fileCount: files.length,
+  });
 
   if (!hasOpenRouterKey()) {
-    console.log('[Extraction] OPENROUTER_API_KEY is not configured; using local fallback extraction.');
+    logger.warn('openrouter_missing_using_fallback', { repoId });
   } else {
-    console.log('[Extraction] Step 1/4: Detecting tech stack...');
+    logger.info('extraction_step_started', { repoId, step: 'tech_stack' });
     try {
       const prompt = buildTechStackPrompt(normalizedFileTree, packageJsonText, getConfigFiles(files));
-      techStack = await callOpenRouterStructured<TechStack>(
-        prompt.user,
-        prompt.system,
-        prompt.schema,
-        techStackResponseSchema
-      );
-      console.log(`[Extraction] Tech stack detected: ${techStack.language} / ${techStack.framework || 'none'}`);
+      techStack = await callOpenRouterStructured<TechStack>(prompt.user, prompt.system, prompt.schema);
+      logger.info('tech_stack_detected', {
+        repoId,
+        language: techStack.language,
+        framework: techStack.framework || 'none',
+      });
     } catch (error) {
-      aiUnavailableReason = describeAiStepFailure('Tech stack detection', error);
+      logger.error('tech_stack_detection_failed', { repoId, error });
     }
 
-    if (aiUnavailableReason) {
-      console.warn(`[Extraction] Skipping remaining OpenRouter extraction steps for repo ${repoId}: ${aiUnavailableReason}`);
-    }
-  }
-
-  if (hasOpenRouterKey() && !aiUnavailableReason) {
-    console.log('[Extraction] Step 2/4: Generating overview...');
+    logger.info('extraction_step_started', { repoId, step: 'overview' });
     try {
       const prompt = buildOverviewPrompt(readme, packageJson, normalizedFileTree);
-      overview = await callOpenRouterStructured<Overview>(
-        prompt.user,
-        prompt.system,
-        prompt.schema,
-        overviewResponseSchema
-      );
-      console.log(`[Extraction] Overview generated: ${overview.oneLiner.slice(0, 80)}...`);
+      overview = await callOpenRouterStructured<Overview>(prompt.user, prompt.system, prompt.schema);
+      logger.info('overview_generated', {
+        repoId,
+        oneLinerLength: overview.oneLiner.length,
+      });
     } catch (error) {
-      aiUnavailableReason = describeAiStepFailure('Overview generation', error);
-    }
-  }
-
-  if (hasOpenRouterKey() && !aiUnavailableReason) {
-    console.log('[Extraction] Step 3/4: Documenting functions...');
-    const promptChunks = buildFunctionPromptChunks(files);
-    const aiFunctions: FunctionDoc[] = [];
-
-    if (promptChunks.length === 0) {
-      console.log('[Extraction] No supported source files found for AI function documentation.');
+      logger.error('overview_generation_failed', { repoId, error });
     }
 
-    for (const prompt of promptChunks) {
-      try {
-        console.log(
-          `[Extraction] Function chunk ${prompt.chunkIndex + 1}/${prompt.totalChunks}: ${prompt.includedFiles.length} files`
-        );
-        const chunkFunctions = await callOpenRouterStructured<FunctionDoc[]>(
-          prompt.user,
-          prompt.system,
-          prompt.schema,
-          functionsResponseSchema,
-          { maxTokens: Math.min(config.openrouter.maxTokens, 3072) }
-        );
-        aiFunctions.push(...chunkFunctions);
-      } catch (error) {
-        const reason = describeAiStepFailure(`Function documentation chunk ${prompt.chunkIndex + 1}`, error);
-        aiUnavailableReason = reason;
-        break;
-      }
-    }
-
-    if (aiFunctions.length > 0) {
-      functions = mergeFunctionDocs(aiFunctions, functions);
-      console.log(`[Extraction] Documented ${functions.length} functions from ${aiFunctions.length} AI chunk results`);
+    logger.info('extraction_step_started', { repoId, step: 'functions' });
+    try {
+      const prompt = buildFunctionsPrompt(files);
+      const aiFunctions = await callOpenRouterStructured<FunctionDoc[]>(prompt.user, prompt.system, prompt.schema);
+      functions = aiFunctions.length > 0 ? aiFunctions : functions;
+      logger.info('functions_documented', { repoId, functionCount: functions.length });
+    } catch (error) {
+      logger.error('function_documentation_failed', { repoId, error });
     }
   }
 
   const analysis: ExtractionResult = { techStack, overview, functions, dependencies };
 
   if (!(await repoStillExists(repoId))) {
-    console.log(`[Extraction] Repo ${repoId} was deleted before partial results were saved; skipping writes.`);
+    logger.warn('repo_deleted_before_partial_save', { repoId });
     return { analysis, aiReadme, runnability };
   }
 
-  const analysisMetadata = {
-    ...(options.sourceHash ? { analysisSourceHash: options.sourceHash } : {}),
-    analysisModel: hasOpenRouterKey() ? config.openrouter.model : null,
-    analysisUpdatedAt: new Date().toISOString(),
-  };
+  await setDoc('repos', repoId, { analysis, runnability }, { merge: true });
 
-  await setDoc('repos', repoId, { analysis, runnability, ...analysisMetadata }, { merge: true });
-
-  if (hasOpenRouterKey() && !aiUnavailableReason) {
-    console.log('[Extraction] Step 4/4: Generating AI README...');
+  if (hasOpenRouterKey()) {
+    logger.info('extraction_step_started', { repoId, step: 'ai_readme' });
     try {
-      const prompt = buildAiReadmePrompt(techStack, overview, functions, dependencies, repoName, runnability);
+      const prompt = buildAiReadmePrompt(techStack, overview, functions, dependencies, repoName);
       const generatedReadme = await callOpenRouter(prompt.user, prompt.system);
       aiReadme = generatedReadme.trim() || aiReadme;
-      console.log(`[Extraction] AI README generated (${aiReadme.length} chars)`);
+      logger.info('ai_readme_generated', { repoId, readmeLength: aiReadme.length });
     } catch (error) {
-      aiUnavailableReason = describeAiStepFailure('AI README generation', error);
+      logger.error('ai_readme_generation_failed', { repoId, error });
     }
-  } else if (aiUnavailableReason) {
-    console.warn(`[Extraction] AI README generation skipped for repo ${repoId}: ${aiUnavailableReason}`);
   }
 
   if (!(await repoStillExists(repoId))) {
-    console.log(`[Extraction] Repo ${repoId} was deleted before final results were saved; skipping writes.`);
+    logger.warn('repo_deleted_before_final_save', { repoId });
     return { analysis, aiReadme, runnability };
   }
 
@@ -551,11 +460,15 @@ export async function extractAll(
       analysis,
       aiReadme,
       runnability,
-      ...analysisMetadata,
     },
     { merge: true }
   );
 
-  console.log(`[Extraction] Extraction complete for repo ${repoId}`);
+  logger.info('extraction_completed', {
+    repoId,
+    durationMs: Date.now() - startedAt,
+    functionCount: functions.length,
+    canRun: runnability.canRun,
+  });
   return { analysis, aiReadme, runnability };
 }
