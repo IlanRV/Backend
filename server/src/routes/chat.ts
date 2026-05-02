@@ -1,0 +1,163 @@
+import { Router } from 'express';
+import { v4 as uuidv4 } from 'uuid';
+import { callOpenRouter } from '../ai/openrouter';
+import { buildRepoChatSystemPrompt, buildWorkspaceChatSystemPrompt } from '../ai/prompts/chatContext';
+import { getCollection, getDoc, setDoc } from '../lib/firebase';
+import { asyncHandler, createHttpError, getRouteParam } from '../lib/http';
+import { ChatMessage, Repo, Workspace } from '../types';
+
+const router = Router();
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function messageFromDoc(document: FirebaseFirestore.QueryDocumentSnapshot): ChatMessage {
+  return {
+    ...(document.data() as ChatMessage),
+    messageId: document.id,
+  };
+}
+
+async function getMessages(scopeType: ChatMessage['scopeType'], scopeId: string): Promise<ChatMessage[]> {
+  const snapshot = await getCollection('chat_messages')
+    .where('scopeType', '==', scopeType)
+    .where('scopeId', '==', scopeId)
+    .orderBy('timestamp', 'asc')
+    .get();
+
+  return snapshot.docs.map(messageFromDoc);
+}
+
+async function getLastMessages(scopeType: ChatMessage['scopeType'], scopeId: string): Promise<ChatMessage[]> {
+  const snapshot = await getCollection('chat_messages')
+    .where('scopeType', '==', scopeType)
+    .where('scopeId', '==', scopeId)
+    .orderBy('timestamp', 'desc')
+    .limit(20)
+    .get();
+
+  return snapshot.docs.map(messageFromDoc).reverse();
+}
+
+async function saveChatMessage(message: Omit<ChatMessage, 'messageId' | 'timestamp'>): Promise<ChatMessage> {
+  const chatMessage: ChatMessage = {
+    ...message,
+    messageId: uuidv4(),
+    timestamp: new Date().toISOString(),
+  };
+
+  await setDoc('chat_messages', chatMessage.messageId, chatMessage);
+  return chatMessage;
+}
+
+router.post(
+  '/repo/:repoId',
+  asyncHandler(async (req, res) => {
+    const { message } = req.body as { message?: unknown };
+
+    if (!isNonEmptyString(message)) {
+      throw createHttpError(400, 'message is required');
+    }
+
+    const repoId = getRouteParam(req, 'repoId');
+    const repo = await getDoc<Repo>('repos', repoId);
+
+    if (!repo) {
+      throw createHttpError(404, 'Repo not found');
+    }
+
+    const history = await getLastMessages('repo', repo.repoId);
+    const systemPrompt = buildRepoChatSystemPrompt(repo, history);
+    const reply = await callOpenRouter(message.trim(), systemPrompt);
+
+    await saveChatMessage({
+      scopeType: 'repo',
+      scopeId: repo.repoId,
+      role: 'user',
+      content: message.trim(),
+    });
+    await saveChatMessage({
+      scopeType: 'repo',
+      scopeId: repo.repoId,
+      role: 'assistant',
+      content: reply,
+    });
+
+    res.json({ reply });
+  })
+);
+
+router.get(
+  '/repo/:repoId',
+  asyncHandler(async (req, res) => {
+    const repoId = getRouteParam(req, 'repoId');
+    const repo = await getDoc<Repo>('repos', repoId);
+
+    if (!repo) {
+      throw createHttpError(404, 'Repo not found');
+    }
+
+    res.json(await getMessages('repo', repo.repoId));
+  })
+);
+
+router.post(
+  '/workspace/:wsId',
+  asyncHandler(async (req, res) => {
+    const { message } = req.body as { message?: unknown };
+
+    if (!isNonEmptyString(message)) {
+      throw createHttpError(400, 'message is required');
+    }
+
+    const workspaceId = getRouteParam(req, 'wsId');
+    const workspace = await getDoc<Workspace>('workspaces', workspaceId);
+
+    if (!workspace) {
+      throw createHttpError(404, 'Workspace not found');
+    }
+
+    const repoSnapshot = await getCollection('repos')
+      .where('workspaceId', '==', workspace.workspaceId)
+      .orderBy('createdAt', 'asc')
+      .get();
+    const repos = repoSnapshot.docs.map((document) => ({
+      ...(document.data() as Repo),
+      repoId: document.id,
+    }));
+    const history = await getLastMessages('workspace', workspace.workspaceId);
+    const systemPrompt = buildWorkspaceChatSystemPrompt(workspace, repos, history);
+    const reply = await callOpenRouter(message.trim(), systemPrompt);
+
+    await saveChatMessage({
+      scopeType: 'workspace',
+      scopeId: workspace.workspaceId,
+      role: 'user',
+      content: message.trim(),
+    });
+    await saveChatMessage({
+      scopeType: 'workspace',
+      scopeId: workspace.workspaceId,
+      role: 'assistant',
+      content: reply,
+    });
+
+    res.json({ reply });
+  })
+);
+
+router.get(
+  '/workspace/:wsId',
+  asyncHandler(async (req, res) => {
+    const workspaceId = getRouteParam(req, 'wsId');
+    const workspace = await getDoc<Workspace>('workspaces', workspaceId);
+
+    if (!workspace) {
+      throw createHttpError(404, 'Workspace not found');
+    }
+    res.json(await getMessages('workspace', workspace.workspaceId));
+  })
+);
+
+export default router;
