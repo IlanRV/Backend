@@ -4,6 +4,7 @@ import { createLogger } from '../../lib/logger';
 interface PromptResult {
   system: string;
   user: string;
+  schema: object;
 }
 
 const logger = createLogger('prompt-ai-readme');
@@ -36,8 +37,8 @@ export function buildAiReadmePrompt(
   const system = [
     'You are a senior developer who writes practical README documentation for real repositories.',
     'Favor concrete repository evidence over generic boilerplate.',
-    'Respond in clean, well-formatted Markdown.',
-    'Do not wrap your response in code fences. Return raw markdown only.',
+    'Return valid JSON only, with the raw README markdown in the markdown field.',
+    'Do not add prose outside the JSON object.',
   ].join(' ');
 
   const user = `Generate a complete, professional README.md for the project "${repoName}".
@@ -68,7 +69,7 @@ RUNNABILITY:
 - Entry point: ${runnability.entryPoint || 'None detected'}
 - Blockers: ${runnability.blockers.join('; ') || 'None detected'}
 
-Write a README.md with these sections, in this order:
+Write a README.md with these sections, in this order, and return it as the JSON field "markdown":
 
 # ${repoName}
 
@@ -106,7 +107,17 @@ Rules:
 - If BrowserPod runnability has blockers, explain them plainly in Setup Instructions.
 - Do not list environment variables unless they are strongly implied by code, config names, or dependency usage.
 - If information is missing, infer cautiously and say what maintainers should confirm.
-- Do not invent unsupported features.`;
+- Do not invent unsupported features.
+- The markdown field must contain raw Markdown, not a markdown code fence.`;
 
-  return { system, user };
+  const schema = {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      markdown: { type: 'string' },
+    },
+    required: ['markdown'],
+  };
+
+  return { system, user, schema };
 }

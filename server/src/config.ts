@@ -55,7 +55,7 @@ export const config = {
     maxTokens: parseInteger(process.env.OPENROUTER_MAX_TOKENS, 4096),
     retryCount: parseInteger(process.env.OPENROUTER_RETRY_COUNT, 0),
     timeoutMs: parseInteger(process.env.OPENROUTER_TIMEOUT_MS, 45000),
-    strictJsonSchema: parseBoolean(process.env.OPENROUTER_STRICT_JSON_SCHEMA, false),
+    strictJsonSchema: parseBoolean(process.env.OPENROUTER_STRICT_JSON_SCHEMA, true),
     appName: process.env.OPENROUTER_APP_NAME || 'DevHub',
     siteUrl: process.env.OPENROUTER_SITE_URL || '',
   },

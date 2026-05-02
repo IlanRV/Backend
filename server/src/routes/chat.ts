@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { callOpenRouter, formatOpenRouterFailure, isOpenRouterFailure } from '../ai/openrouter';
+import { callOpenRouterStructured, formatOpenRouterFailure, isOpenRouterFailure } from '../ai/openrouter';
 import { buildRepoChatSystemPrompt, buildWorkspaceChatSystemPrompt } from '../ai/prompts/chatContext';
+import { chatReplyResponseSchema, type ChatReplyResponse } from '../ai/schemas';
 import { getCollection, getDoc, setDoc } from '../lib/firebase';
 import { asyncHandler, createHttpError, getRouteParam } from '../lib/http';
 import { createLogger } from '../lib/logger';
@@ -9,6 +10,14 @@ import { ChatMessage, Repo, Workspace } from '../types';
 
 const router = Router();
 const logger = createLogger('routes-chat');
+const chatReplyJsonSchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    reply: { type: 'string' },
+  },
+  required: ['reply'],
+};
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
@@ -104,6 +113,34 @@ function getDuplicateCachedReply(messages: ChatMessage[], content: string): stri
   return null;
 }
 
+function buildStructuredChatPrompt(systemPrompt: string): string {
+  return [
+    systemPrompt,
+    'Response contract:',
+    'Return valid JSON only with this shape: { "reply": "plain Markdown answer for the user" }.',
+    'The reply field should contain the complete answer. Do not include JSON, schema details, or tool metadata inside the reply text.',
+  ].join('\n\n');
+}
+
+async function callStructuredChatReply(message: string, systemPrompt: string): Promise<string> {
+  const response = await callOpenRouterStructured<ChatReplyResponse>(
+    message,
+    buildStructuredChatPrompt(systemPrompt),
+    chatReplyJsonSchema,
+    chatReplyResponseSchema
+  );
+
+  return response.reply.trim();
+}
+
+function chatFailureReason(error: unknown): string {
+  if (isOpenRouterFailure(error)) {
+    return formatOpenRouterFailure(error);
+  }
+
+  return 'The AI response did not match DevHub validation, so it was rejected before being shown.';
+}
+
 router.post(
   '/repo/:repoId',
   asyncHandler(async (req, res) => {
@@ -140,14 +177,10 @@ router.post(
     let reply: string;
 
     try {
-      reply = await callOpenRouter(trimmedMessage, systemPrompt);
+      reply = await callStructuredChatReply(trimmedMessage, systemPrompt);
     } catch (error) {
-      if (!isOpenRouterFailure(error)) {
-        throw error;
-      }
-
       degraded = true;
-      const reason = formatOpenRouterFailure(error);
+      const reason = chatFailureReason(error);
       logger.warn('repo_chat_degraded', { repoId: repo.repoId, reason });
       reply = buildRepoFallbackReply(repo, reason);
     }
@@ -236,14 +269,10 @@ router.post(
     let reply: string;
 
     try {
-      reply = await callOpenRouter(trimmedMessage, systemPrompt);
+      reply = await callStructuredChatReply(trimmedMessage, systemPrompt);
     } catch (error) {
-      if (!isOpenRouterFailure(error)) {
-        throw error;
-      }
-
       degraded = true;
-      const reason = formatOpenRouterFailure(error);
+      const reason = chatFailureReason(error);
       logger.warn('workspace_chat_degraded', { workspaceId: workspace.workspaceId, reason });
       reply = buildWorkspaceFallbackReply(workspace, repos, reason);
     }

@@ -1,6 +1,14 @@
 import { z } from 'zod';
 import type { FunctionDoc, Overview, TechStack } from '../types';
 
+export interface AiReadmeResponse {
+  markdown: string;
+}
+
+export interface ChatReplyResponse {
+  reply: string;
+}
+
 const nonEmptyStringSchema = z.string().trim().min(1);
 const nullableStringSchema = z.preprocess(
   (value) => (typeof value === 'string' && value.trim().length === 0 ? null : value),
@@ -61,3 +69,15 @@ export const functionDocResponseSchema: z.ZodType<FunctionDoc> = z
 export const functionsResponseSchema: z.ZodType<FunctionDoc[]> = z
   .array(functionDocResponseSchema)
   .transform((functionDocs) => functionDocs.slice(0, 80));
+
+export const aiReadmeResponseSchema: z.ZodType<AiReadmeResponse> = z
+  .object({
+    markdown: nonEmptyStringSchema,
+  })
+  .strict();
+
+export const chatReplyResponseSchema: z.ZodType<ChatReplyResponse> = z
+  .object({
+    reply: nonEmptyStringSchema,
+  })
+  .strict();

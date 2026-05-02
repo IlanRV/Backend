@@ -3,7 +3,6 @@ import { getDoc, setDoc } from '../lib/firebase';
 import { createLogger } from '../lib/logger';
 import type { ExtractionResult, FunctionDoc, Overview, Repo, RunnabilityResult, TechStack } from '../types';
 import {
-  callOpenRouter,
   callOpenRouterStructured,
   formatOpenRouterFailure,
   isOpenRouterFailure,
@@ -12,7 +11,13 @@ import { buildAiReadmePrompt } from './prompts/aiReadme';
 import { buildFunctionPromptChunks } from './prompts/functions';
 import { buildOverviewPrompt } from './prompts/overview';
 import { buildTechStackPrompt } from './prompts/techStack';
-import { functionsResponseSchema, overviewResponseSchema, techStackResponseSchema } from './schemas';
+import {
+  aiReadmeResponseSchema,
+  functionsResponseSchema,
+  overviewResponseSchema,
+  techStackResponseSchema,
+  type AiReadmeResponse,
+} from './schemas';
 
 export interface ExtractionFile {
   path: string;
@@ -608,8 +613,13 @@ export async function extractAll(
     logger.info('extraction_step_started', { repoId, step: 'ai_readme' });
     try {
       const prompt = buildAiReadmePrompt(techStack, overview, functions, dependencies, repoName, runnability);
-      const generatedReadme = await callOpenRouter(prompt.user, prompt.system);
-      aiReadme = generatedReadme.trim() || aiReadme;
+      const generatedReadme = await callOpenRouterStructured<AiReadmeResponse>(
+        prompt.user,
+        prompt.system,
+        prompt.schema,
+        aiReadmeResponseSchema
+      );
+      aiReadme = generatedReadme.markdown.trim() || aiReadme;
       logger.info('ai_readme_generated', { repoId, readmeLength: aiReadme.length });
     } catch (error) {
       aiUnavailableReason = describeAiStepFailure('AI README generation', error);
