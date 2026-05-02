@@ -2,6 +2,37 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+function parseInteger(value: string | undefined, fallback: number): number {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function parseCsv(value: string | undefined): string[] {
+  return (value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
+}
+
+function readDeepSeekModel(value: string | undefined): string {
+  const model = value?.trim();
+  return model?.startsWith('deepseek/') ? model : 'deepseek/deepseek-v4-flash';
+}
+
+const openrouterModel = readDeepSeekModel(process.env.OPENROUTER_MODEL);
+
 export const config = {
   port: parseInt(process.env.PORT || '3001', 10),
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',
@@ -17,7 +48,16 @@ export const config = {
   },
   openrouter: {
     apiKey: process.env.OPENROUTER_API_KEY || '',
-    model: process.env.OPENROUTER_MODEL || 'anthropic/claude-sonnet-4',
+    model: openrouterModel,
+    fallbackModels: parseCsv(process.env.OPENROUTER_FALLBACK_MODELS || process.env.OPENROUTER_MODEL_FALLBACKS).filter(
+      (model) => model !== openrouterModel && model.startsWith('deepseek/')
+    ),
+    maxTokens: parseInteger(process.env.OPENROUTER_MAX_TOKENS, 4096),
+    retryCount: parseInteger(process.env.OPENROUTER_RETRY_COUNT, 0),
+    timeoutMs: parseInteger(process.env.OPENROUTER_TIMEOUT_MS, 45000),
+    strictJsonSchema: parseBoolean(process.env.OPENROUTER_STRICT_JSON_SCHEMA, false),
+    appName: process.env.OPENROUTER_APP_NAME || 'DevHub',
+    siteUrl: process.env.OPENROUTER_SITE_URL || '',
   },
   logging: {
     level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),

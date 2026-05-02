@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import { createHash } from 'crypto';
+import { config } from '../config';
 import { extractAll, type ExtractionFile } from '../ai/extraction';
 import { getDoc, setDoc } from '../lib/firebase';
 import { asyncHandler, createHttpError, getRouteParam } from '../lib/http';
@@ -7,6 +9,8 @@ import type { FileTreeNode, Repo } from '../types';
 
 const router = Router();
 const logger = createLogger('routes-ai');
+const activeExtractions = new Map<string, string>();
+const staleAnalysisMs = 15 * 60 * 1000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -63,15 +67,26 @@ function normalizeFileTreeNode(value: unknown): FileTreeNode | null {
         .filter((child): child is FileTreeNode => Boolean(child))
     : undefined;
 
-  return {
+  const node: FileTreeNode = {
     name,
     path,
     type,
-    children,
-    extension: typeof value.extension === 'string' ? value.extension : undefined,
-    size: typeof value.size === 'number' ? value.size : undefined,
-    supported: typeof value.supported === 'boolean' ? value.supported : undefined,
   };
+
+  if (children && children.length > 0) {
+    node.children = children;
+  }
+  if (typeof value.extension === 'string') {
+    node.extension = value.extension;
+  }
+  if (typeof value.size === 'number') {
+    node.size = value.size;
+  }
+  if (typeof value.supported === 'boolean') {
+    node.supported = value.supported;
+  }
+
+  return node;
 }
 
 function getStructuredFileTree(body: unknown): FileTreeNode | null {
@@ -103,6 +118,33 @@ function getRequestFileTree(body: unknown, files: ExtractionFile[]): string {
   return files.map((file) => file.path).sort((left, right) => left.localeCompare(right)).join('\n');
 }
 
+function createExtractionSourceHash(fileTree: string, files: ExtractionFile[]): string {
+  const hash = createHash('sha256');
+  hash.update(fileTree);
+
+  for (const file of [...files].sort((left, right) => left.path.localeCompare(right.path))) {
+    hash.update('\0');
+    hash.update(file.path);
+    hash.update('\0');
+    hash.update(file.content);
+  }
+
+  return hash.digest('hex');
+}
+
+function isFreshAnalyzing(repo: Repo): boolean {
+  if (repo.status !== 'analyzing') {
+    return false;
+  }
+
+  if (!repo.analysisStartedAt) {
+    return true;
+  }
+
+  const startedAt = Date.parse(repo.analysisStartedAt);
+  return Number.isFinite(startedAt) && Date.now() - startedAt < staleAnalysisMs;
+}
+
 router.post(
   '/extract/:repoId',
   asyncHandler(async (req, res) => {
@@ -116,6 +158,7 @@ router.post(
     const files = getRequestFiles(req.body);
     const fileTree = getRequestFileTree(req.body, files);
     const structuredFileTree = getStructuredFileTree(req.body);
+    const sourceHash = createExtractionSourceHash(fileTree, files);
 
     logger.info('ai_extraction_requested', {
       repoId: repo.repoId,
@@ -124,15 +167,31 @@ router.post(
       fileTreeLineCount: fileTree.split('\n').filter(Boolean).length,
     });
 
-    const repoUpdate: Partial<Repo> = { status: 'analyzing' };
+    if (activeExtractions.has(repo.repoId) || isFreshAnalyzing(repo)) {
+      res.status(202).json({ success: true, extractionId: repo.repoId, status: 'analyzing', deduped: true });
+      return;
+    }
+
+    if (repo.analysis && repo.aiReadme && repo.analysisSourceHash === sourceHash) {
+      res.json({ success: true, extractionId: repo.repoId, status: repo.status, cached: true });
+      return;
+    }
+
+    const repoUpdate: Partial<Repo> = {
+      status: 'analyzing',
+      analysisSourceHash: sourceHash,
+      analysisStartedAt: new Date().toISOString(),
+      analysisModel: config.openrouter.apiKey ? config.openrouter.model : null,
+    };
 
     if (structuredFileTree) {
       repoUpdate.fileTree = structuredFileTree;
     }
 
     await setDoc('repos', repo.repoId, repoUpdate, { merge: true });
+    activeExtractions.set(repo.repoId, sourceHash);
 
-    void extractAll(repo.repoId, repo.name, fileTree, files)
+    void extractAll(repo.repoId, repo.name, fileTree, files, { sourceHash })
       .then((result) => {
         logger.info('ai_extraction_background_completed', {
           repoId: repo.repoId,
@@ -142,6 +201,9 @@ router.post(
       .catch((error: unknown) => {
         logger.error('ai_extraction_background_failed', { repoId: repo.repoId, error });
         void setDoc('repos', repo.repoId, { status: 'error' satisfies Repo['status'] }, { merge: true });
+      })
+      .finally(() => {
+        activeExtractions.delete(repo.repoId);
       });
 
     res.status(202).json({ success: true, extractionId: repo.repoId, status: 'analyzing' });
