@@ -1,7 +1,4 @@
 import { NextFunction, Request, RequestHandler, Response } from 'express';
-import { createLogger } from './logger';
-
-const logger = createLogger('http-utils');
 
 export class HttpError extends Error {
   constructor(
@@ -20,14 +17,7 @@ export function asyncHandler(
   handler: (req: Request, res: Response, next: NextFunction) => Promise<void>
 ): RequestHandler {
   return (req, res, next) => {
-    handler(req, res, next).catch((error: unknown) => {
-      logger.debug('async_handler_rejected', {
-        method: req.method,
-        path: req.originalUrl,
-        error,
-      });
-      next(error);
-    });
+    handler(req, res, next).catch(next);
   };
 }
 

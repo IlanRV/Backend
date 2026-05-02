@@ -247,15 +247,6 @@ async function postCompletion(
   options?: CompletionRequestOptions
 ): Promise<string> {
   const { signal, clear } = createTimeoutSignal();
-  const startedAt = Date.now();
-
-  logger.info('openrouter_call_started', {
-    model,
-    mode: options?.responseFormat ? 'structured_schema' : 'text_or_prompt_json',
-    userMessageLength: userMessage.length,
-    systemPromptLength: systemPrompt.length,
-    maxTokens: options?.maxTokens || config.openrouter.maxTokens,
-  });
 
   try {
     const response = await fetch(OPENROUTER_URL, {
@@ -265,11 +256,6 @@ async function postCompletion(
       body: JSON.stringify(buildBody(userMessage, systemPrompt, model, options)),
     });
     const content = await parseResponse(response, model);
-    logger.info('openrouter_call_completed', {
-      model,
-      durationMs: Date.now() - startedAt,
-      responseLength: content.length,
-    });
     return content;
   } catch (error) {
     if (error instanceof OpenRouterError) {

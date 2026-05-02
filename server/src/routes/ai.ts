@@ -165,13 +165,6 @@ router.post(
     const structuredFileTree = getStructuredFileTree(req.body);
     const sourceHash = createExtractionSourceHash(fileTree, files);
 
-    logger.info('ai_extraction_requested', {
-      repoId: repo.repoId,
-      repoName: repo.name,
-      fileCount: files.length,
-      fileTreeLineCount: fileTree.split('\n').filter(Boolean).length,
-    });
-
     await Promise.all([
       saveRepoFiles(repo.repoId, files, sourceHash),
       structuredFileTree
@@ -215,12 +208,6 @@ router.post(
     activeExtractions.set(repo.repoId, sourceHash);
 
     void extractAll(repo.repoId, repo.name, fileTree, files, { sourceHash })
-      .then((result) => {
-        logger.info('ai_extraction_background_completed', {
-          repoId: repo.repoId,
-          functionCount: result.analysis.functions.length,
-        });
-      })
       .catch((error: unknown) => {
         logger.error('ai_extraction_background_failed', { repoId: repo.repoId, error });
         void setDoc(
@@ -252,13 +239,6 @@ router.get(
     if (!repo) {
       throw createHttpError(404, 'Repo not found');
     }
-
-    logger.debug('ai_extraction_result_requested', {
-      repoId,
-      status: repo.status,
-      hasAnalysis: Boolean(repo.analysis),
-      hasAiReadme: Boolean(repo.aiReadme),
-    });
 
     res.json({
       success: true,

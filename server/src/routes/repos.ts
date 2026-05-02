@@ -100,11 +100,6 @@ router.get(
       throw createHttpError(404, 'Repo not found');
     }
 
-    logger.debug('repo_returned', {
-      repoId: repo.repoId,
-      workspaceId: repo.workspaceId,
-      status: repo.status,
-    });
     res.json(toApiRepo(repo));
   })
 );

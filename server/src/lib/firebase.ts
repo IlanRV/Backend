@@ -82,23 +82,12 @@ export async function getDoc<T extends FirebaseFirestore.DocumentData>(
   collection: string,
   id: string
 ): Promise<(T & { id: string }) | null> {
-  const startedAt = Date.now();
   const document = await getDb().collection(collection).doc(id).get();
 
   if (!document.exists) {
-    logger.debug('firestore_get_doc_miss', {
-      collection,
-      id,
-      durationMs: Date.now() - startedAt,
-    });
     return null;
   }
 
-  logger.debug('firestore_get_doc_hit', {
-    collection,
-    id,
-    durationMs: Date.now() - startedAt,
-  });
   return withDocumentId(collection, document.id, document.data() as T);
 }
 
@@ -108,28 +97,14 @@ export async function setDoc(
   data: FirebaseFirestore.DocumentData,
   options?: FirebaseFirestore.SetOptions
 ): Promise<void> {
-  const startedAt = Date.now();
   const reference = getDb().collection(collection).doc(id);
 
   if (options) {
     await reference.set(data, options);
-    logger.debug('firestore_set_doc', {
-      collection,
-      id,
-      merge: 'merge' in options ? options.merge : undefined,
-      fieldCount: Object.keys(data).length,
-      durationMs: Date.now() - startedAt,
-    });
     return;
   }
 
   await reference.set(data);
-  logger.debug('firestore_set_doc', {
-    collection,
-    id,
-    fieldCount: Object.keys(data).length,
-    durationMs: Date.now() - startedAt,
-  });
 }
 
 export async function queryDocs<T extends FirebaseFirestore.DocumentData>(
@@ -138,32 +113,17 @@ export async function queryDocs<T extends FirebaseFirestore.DocumentData>(
   operator: FirebaseFirestore.WhereFilterOp,
   value: unknown
 ): Promise<Array<T & { id: string }>> {
-  const startedAt = Date.now();
   const snapshot = await getDb().collection(collection).where(field, operator, value).get();
-  logger.debug('firestore_query_docs', {
-    collection,
-    field,
-    operator,
-    resultCount: snapshot.size,
-    durationMs: Date.now() - startedAt,
-  });
   return snapshot.docs.map((document) => withDocumentId(collection, document.id, document.data() as T));
 }
 
 export async function deleteDoc(collection: string, id: string): Promise<void> {
-  const startedAt = Date.now();
   await getDb().collection(collection).doc(id).delete();
-  logger.info('firestore_delete_doc', {
-    collection,
-    id,
-    durationMs: Date.now() - startedAt,
-  });
 }
 
 export async function deleteQuerySnapshot(
   snapshot: FirebaseFirestore.QuerySnapshot
 ): Promise<number> {
-  const startedAt = Date.now();
   let batch = getDb().batch();
   let operationCount = 0;
   let deletedCount = 0;
@@ -184,21 +144,11 @@ export async function deleteQuerySnapshot(
     await batch.commit();
   }
 
-  logger.info('firestore_delete_query_snapshot', {
-    deletedCount,
-    durationMs: Date.now() - startedAt,
-  });
   return deletedCount;
 }
 
 export async function deleteDocsByQuery(query: FirebaseFirestore.Query): Promise<number> {
-  const startedAt = Date.now();
   const snapshot = await query.get();
   const deletedCount = await deleteQuerySnapshot(snapshot);
-  logger.info('firestore_delete_docs_by_query', {
-    matchedCount: snapshot.size,
-    deletedCount,
-    durationMs: Date.now() - startedAt,
-  });
   return deletedCount;
 }

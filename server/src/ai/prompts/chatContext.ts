@@ -1,7 +1,4 @@
 import { ChatMessage, Repo, Workspace } from '../../types';
-import { createLogger } from '../../lib/logger';
-
-const logger = createLogger('prompt-chat-context');
 
 function truncateText(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
@@ -77,13 +74,6 @@ function formatRepoAnalysis(repo: Repo): string {
 }
 
 export function buildRepoChatSystemPrompt(repo: Repo, messages: ChatMessage[]): string {
-  logger.debug('repo_chat_prompt_built', {
-    repoId: repo.repoId,
-    status: repo.status,
-    hasAnalysis: Boolean(repo.analysis),
-    historyCount: messages.length,
-  });
-
   return [
     'You are DevHub, a practical code expert assistant for repository exploration.',
     'Use only the extracted repository context below. You do not have live access to files beyond this context.',
@@ -101,13 +91,6 @@ export function buildWorkspaceChatSystemPrompt(
   repos: Repo[],
   messages: ChatMessage[]
 ): string {
-  logger.debug('workspace_chat_prompt_built', {
-    workspaceId: workspace.workspaceId,
-    repoCount: repos.length,
-    analyzedRepoCount: repos.filter((repo) => Boolean(repo.analysis)).length,
-    historyCount: messages.length,
-  });
-
   return [
     'You are DevHub, a practical code expert assistant for multi-repository workspaces.',
     'Use only the extracted workspace context below. You do not have live access to files beyond this context.',

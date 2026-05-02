@@ -60,6 +60,6 @@ export const config = {
     siteUrl: process.env.OPENROUTER_SITE_URL || '',
   },
   logging: {
-    level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
+    level: process.env.LOG_LEVEL || 'info',
   },
 };

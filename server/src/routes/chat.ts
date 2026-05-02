@@ -60,13 +60,6 @@ async function saveChatMessage(message: Omit<ChatMessage, 'messageId' | 'timesta
   };
 
   await setDoc('chat_messages', chatMessage.messageId, chatMessage);
-  logger.debug('chat_message_saved', {
-    messageId: chatMessage.messageId,
-    scopeType: chatMessage.scopeType,
-    scopeId: chatMessage.scopeId,
-    role: chatMessage.role,
-    contentLength: chatMessage.content.length,
-  });
   return chatMessage;
 }
 
@@ -167,11 +160,6 @@ router.post(
     }
 
     const systemPrompt = buildRepoChatSystemPrompt(repo, history);
-    logger.info('repo_chat_requested', {
-      repoId: repo.repoId,
-      historyCount: history.length,
-      messageLength: trimmedMessage.length,
-    });
 
     let degraded = false;
     let reply: string;
@@ -198,10 +186,6 @@ router.post(
       content: reply,
     });
 
-    logger.info('repo_chat_replied', {
-      repoId: repo.repoId,
-      replyLength: reply.length,
-    });
     res.json({ reply, degraded });
   })
 );
@@ -217,10 +201,6 @@ router.get(
     }
 
     const messages = await getMessages('repo', repo.repoId);
-    logger.debug('repo_chat_history_returned', {
-      repoId: repo.repoId,
-      messageCount: messages.length,
-    });
     res.json(messages);
   })
 );
@@ -258,12 +238,6 @@ router.post(
     }
 
     const systemPrompt = buildWorkspaceChatSystemPrompt(workspace, repos, history);
-    logger.info('workspace_chat_requested', {
-      workspaceId: workspace.workspaceId,
-      repoCount: repos.length,
-      historyCount: history.length,
-      messageLength: trimmedMessage.length,
-    });
 
     let degraded = false;
     let reply: string;
@@ -290,10 +264,6 @@ router.post(
       content: reply,
     });
 
-    logger.info('workspace_chat_replied', {
-      workspaceId: workspace.workspaceId,
-      replyLength: reply.length,
-    });
     res.json({ reply, degraded });
   })
 );
@@ -308,10 +278,6 @@ router.get(
       throw createHttpError(404, 'Workspace not found');
     }
     const messages = await getMessages('workspace', workspace.workspaceId);
-    logger.debug('workspace_chat_history_returned', {
-      workspaceId: workspace.workspaceId,
-      messageCount: messages.length,
-    });
     res.json(messages);
   })
 );

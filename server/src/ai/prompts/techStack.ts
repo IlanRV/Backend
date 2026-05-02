@@ -1,12 +1,8 @@
-import { createLogger } from '../../lib/logger';
-
 interface PromptResult {
   system: string;
   user: string;
   schema: object;
 }
-
-const logger = createLogger('prompt-tech-stack');
 
 export function buildTechStackPrompt(
   fileTree: string,
@@ -16,12 +12,6 @@ export function buildTechStackPrompt(
   const configFilesText = configFiles
     .map((file) => `=== ${file.path} ===\n${file.content.slice(0, 2000)}`)
     .join('\n\n');
-
-  logger.debug('tech_stack_prompt_built', {
-    fileTreeLineCount: fileTree.split('\n').filter(Boolean).length,
-    packageJsonLength: packageJson.length,
-    configFileCount: configFiles.length,
-  });
 
   const system = [
     'You are a careful software project analyzer for DevHub.',

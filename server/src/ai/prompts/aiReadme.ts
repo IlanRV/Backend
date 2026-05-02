@@ -1,13 +1,10 @@
 import type { FunctionDoc, Overview, RunnabilityResult, TechStack } from '../../types';
-import { createLogger } from '../../lib/logger';
 
 interface PromptResult {
   system: string;
   user: string;
   schema: object;
 }
-
-const logger = createLogger('prompt-ai-readme');
 
 export function buildAiReadmePrompt(
   techStack: TechStack,
@@ -23,16 +20,6 @@ export function buildAiReadmePrompt(
   const depsText = Object.entries(dependencies)
     .map(([name, version]) => `- \`${name}\`: \`${version}\``)
     .join('\n');
-
-  logger.debug('ai_readme_prompt_built', {
-    repoName,
-    functionCount: functions.length,
-    dependencyCount: Object.keys(dependencies).length,
-    language: techStack.language,
-    framework: techStack.framework,
-    overviewLength: overview.summary.length,
-    canRun: runnability.canRun,
-  });
 
   const system = [
     'You are a senior developer who writes practical README documentation for real repositories.',

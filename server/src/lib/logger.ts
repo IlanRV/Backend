@@ -13,7 +13,7 @@ const severityByLevel: Record<LogLevel, number> = {
 };
 
 const sensitiveKeyPattern = /(authorization|api.?key|token|secret|password|private.?key|client.?email|credential)/i;
-const defaultLogLevel: LogLevel = process.env.NODE_ENV === 'production' ? 'info' : 'debug';
+const defaultLogLevel: LogLevel = 'info';
 const configuredLogLevel = readLogLevel(process.env.LOG_LEVEL) || defaultLogLevel;
 
 function readLogLevel(value: string | undefined): LogLevel | null {
@@ -117,18 +117,15 @@ export function requestLogger(): RequestHandler {
     const startedAt = Date.now();
 
     res.setHeader('X-Request-Id', requestId);
-    httpLogger.info('request_started', {
-      requestId,
-      method: req.method,
-      path: req.originalUrl,
-      ip: req.ip,
-    });
-
     res.on('finish', () => {
       const durationMs = Date.now() - startedAt;
       const level: LogLevel = res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info';
 
-      httpLogger[level]('request_completed', {
+      if (level === 'info' && durationMs < 1000) {
+        return;
+      }
+
+      httpLogger[level](level === 'info' ? 'slow_request_completed' : 'request_failed', {
         requestId,
         method: req.method,
         path: req.originalUrl,

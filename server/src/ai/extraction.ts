@@ -376,10 +376,6 @@ function buildFallbackAiReadme(
 }
 
 function buildFallbackExtraction(repoName: string, files: ExtractionFile[]): ExtractAllResult {
-  logger.debug('fallback_extraction_building', {
-    repoName,
-    fileCount: files.length,
-  });
   const packageMetadata = getPackageMetadata(files);
   const dependencies = { ...packageMetadata.dependencies, ...packageMetadata.devDependencies };
   const techStack = buildFallbackTechStack(files, packageMetadata);
@@ -419,9 +415,7 @@ function hasOpenRouterKey(): boolean {
 }
 
 async function repoStillExists(repoId: string): Promise<boolean> {
-  const exists = Boolean(await getDoc('repos', repoId));
-  logger.debug('repo_existence_checked', { repoId, exists });
-  return exists;
+  return Boolean(await getDoc('repos', repoId));
 }
 
 function describeAiStepFailure(step: string, error: unknown): string {
@@ -506,7 +500,6 @@ export async function extractAll(
   if (!hasOpenRouterKey()) {
     logger.warn('openrouter_missing_using_fallback', { repoId });
   } else {
-    logger.info('extraction_step_started', { repoId, step: 'tech_stack' });
     try {
       const prompt = buildTechStackPrompt(normalizedFileTree, packageJsonText, getConfigFiles(files));
       techStack = await callOpenRouterStructured<TechStack>(
@@ -515,18 +508,12 @@ export async function extractAll(
         prompt.schema,
         techStackResponseSchema
       );
-      logger.info('tech_stack_detected', {
-        repoId,
-        language: techStack.language,
-        framework: techStack.framework || 'none',
-      });
     } catch (error) {
       aiUnavailableReason = describeAiStepFailure('Tech stack detection', error);
     }
   }
 
   if (hasOpenRouterKey() && !aiUnavailableReason) {
-    logger.info('extraction_step_started', { repoId, step: 'overview' });
     try {
       const prompt = buildOverviewPrompt(readme, packageJson, normalizedFileTree);
       overview = await callOpenRouterStructured<Overview>(
@@ -535,28 +522,17 @@ export async function extractAll(
         prompt.schema,
         overviewResponseSchema
       );
-      logger.info('overview_generated', {
-        repoId,
-        oneLinerLength: overview.oneLiner.length,
-      });
     } catch (error) {
       aiUnavailableReason = describeAiStepFailure('Overview generation', error);
     }
   }
 
   if (hasOpenRouterKey() && !aiUnavailableReason) {
-    logger.info('extraction_step_started', { repoId, step: 'functions' });
     const promptChunks = buildFunctionPromptChunks(files);
     const aiFunctions: FunctionDoc[] = [];
 
     for (const prompt of promptChunks) {
       try {
-        logger.info('function_chunk_started', {
-          repoId,
-          chunkIndex: prompt.chunkIndex,
-          totalChunks: prompt.totalChunks,
-          includedFileCount: prompt.includedFiles.length,
-        });
         const chunkFunctions = await callOpenRouterStructured<FunctionDoc[]>(
           prompt.user,
           prompt.system,
@@ -573,11 +549,6 @@ export async function extractAll(
 
     if (aiFunctions.length > 0) {
       functions = mergeFunctionDocs(aiFunctions, functions);
-      logger.info('functions_documented', {
-        repoId,
-        functionCount: functions.length,
-        aiFunctionCount: aiFunctions.length,
-      });
     }
   }
 
@@ -610,7 +581,6 @@ export async function extractAll(
   );
 
   if (hasOpenRouterKey() && !aiUnavailableReason) {
-    logger.info('extraction_step_started', { repoId, step: 'ai_readme' });
     try {
       const prompt = buildAiReadmePrompt(techStack, overview, functions, dependencies, repoName, runnability);
       const generatedReadme = await callOpenRouterStructured<AiReadmeResponse>(
@@ -620,7 +590,6 @@ export async function extractAll(
         aiReadmeResponseSchema
       );
       aiReadme = generatedReadme.markdown.trim() || aiReadme;
-      logger.info('ai_readme_generated', { repoId, readmeLength: aiReadme.length });
     } catch (error) {
       aiUnavailableReason = describeAiStepFailure('AI README generation', error);
     }

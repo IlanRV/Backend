@@ -16,7 +16,6 @@ app.use(requestLogger());
 app.use(express.json({ limit: '35mb' }));
 
 app.get('/api/health', (_req, res) => {
-  logger.debug('health_check');
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 

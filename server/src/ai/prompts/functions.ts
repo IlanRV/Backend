@@ -1,5 +1,3 @@
-import { createLogger } from '../../lib/logger';
-
 export interface PromptResult {
   system: string;
   user: string;
@@ -18,7 +16,6 @@ interface SourceFile {
   content: string;
 }
 
-const logger = createLogger('prompt-functions');
 const supportedExtensions = new Set(['js', 'ts', 'jsx', 'tsx', 'mjs', 'cjs']);
 const ignoredPathFragments = ['/node_modules/', '/dist/', '/build/', '/coverage/', '/.git/'];
 const maxRankedSourceFiles = 24;
@@ -80,14 +77,6 @@ function buildPromptForChunk(
   const sourceFiles = selectedFiles
     .map((file) => `=== ${file.path} ===\n${file.content.slice(0, maxCharsPerFile)}`)
     .join('\n\n');
-
-  logger.debug('functions_prompt_chunk_built', {
-    chunkIndex,
-    totalChunks,
-    candidateCount,
-    includedFileCount: selectedFiles.length,
-    omittedCount,
-  });
 
   const system = [
     'You are a precise code documentation expert for DevHub.',
@@ -201,14 +190,6 @@ export function buildFunctionPromptChunks(files: SourceFile[]): FunctionPromptCh
     .slice(0, maxRankedSourceFiles);
   const windows = rollingWindows(rankedFiles, maxFilesPerChunk, chunkOverlapFiles, maxChunks);
   const omittedCount = Math.max(0, candidateFiles.length - rankedFiles.length);
-
-  logger.debug('functions_prompt_chunks_built', {
-    inputFileCount: files.length,
-    candidateFileCount: candidateFiles.length,
-    rankedFileCount: rankedFiles.length,
-    chunkCount: windows.length,
-    omittedCount,
-  });
 
   return windows.map((windowFiles, chunkIndex) =>
     buildPromptForChunk(windowFiles, chunkIndex, windows.length, candidateFiles.length, omittedCount)

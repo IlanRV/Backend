@@ -58,10 +58,6 @@ router.get(
       })
     );
 
-    logger.info('workspaces_listed', {
-      workspaceCount: workspaces.length,
-      repoCount: workspaces.reduce((count, workspace) => count + workspace.repoCount, 0),
-    });
     res.json(workspaces);
   })
 );
@@ -118,10 +114,6 @@ router.get(
       .get();
     const repos = repoSnapshot.docs.map(repoFromDoc).sort(byCreatedAt);
 
-    logger.debug('workspace_returned', {
-      workspaceId: workspace.workspaceId,
-      repoCount: repos.length,
-    });
     res.json({
       ...workspace,
       repoCount: repos.length,
