@@ -336,6 +336,74 @@ describe('extractAll fallback path', () => {
     );
   });
 
+  it('flags nodejs-goof vulnerable packages from package-lock and avoids auto-preview without MongoDB', async () => {
+    const result = await extractAll('repo-1', 'nodejs-goof', 'package.json\npackage-lock.json\nREADME.md\ndocker-compose.yml\napp.js\nmongoose-db.js', [
+      {
+        path: 'package.json',
+        content: JSON.stringify({
+          name: 'goof',
+          scripts: {
+            dev: 'NODE_OPTIONS=--openssl-legacy-provider nodemon ./app.js',
+            start: 'NODE_OPTIONS=--openssl-legacy-provider node app.js',
+            test: 'snyk test',
+          },
+          dependencies: {
+            express: '4.17.1',
+            marked: '0.3.5',
+            mongoose: '4.2.4',
+            mongodb: '2.0.46',
+            st: '0.2.4',
+          },
+        }),
+      },
+      {
+        path: 'package-lock.json',
+        content: JSON.stringify({
+          lockfileVersion: 3,
+          packages: {
+            'node_modules/marked': { version: '0.3.5' },
+            'node_modules/st': { version: '0.2.4' },
+            'node_modules/ms': { version: '0.7.1' },
+            'node_modules/mongoose': { version: '4.2.4' },
+            'node_modules/lodash': { version: '4.17.15' },
+          },
+        }),
+      },
+      { path: 'README.md', content: 'Run mongod before npm start. MongoDB 3 is known to work ok.' },
+      { path: 'docker-compose.yml', content: 'services:\n  mongo:\n    image: mongo:3' },
+      { path: 'app.js', content: 'const express = require("express"); const app = express(); app.listen(3001);' },
+      { path: 'mongoose-db.js', content: 'mongoose.connect(process.env.MONGOLAB_URI || "mongodb://localhost/express-todo")' },
+    ]);
+
+    expect(result.analysis.security.dependencyRisks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ packageName: 'marked', version: '0.3.5' }),
+      expect.objectContaining({ packageName: 'st', version: '0.2.4' }),
+      expect.objectContaining({ packageName: 'mongoose', version: '4.2.4' }),
+      expect.objectContaining({ packageName: 'lodash', version: '4.17.15' }),
+    ]));
+    expect(result.runnability).toMatchObject({
+      canRun: false,
+      entryPoint: 'dev',
+      runtimeProfile: {
+        projectKind: 'api-server',
+        supportLevel: 'manual-only',
+        previewExpected: false,
+        autoCommand: null,
+      },
+    });
+    expect(result.runnability.blockerDetails).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'external-service-required',
+        severity: 'warning',
+        title: 'External service required',
+        evidence: expect.stringContaining('MongoDB'),
+      }),
+    ]));
+    expect(result.runnability.manualCommands).toEqual(expect.arrayContaining([
+      expect.objectContaining({ command: 'npm run dev', label: 'Run server with external services' }),
+    ]));
+  });
+
   it('keeps harmless prepare build scripts low risk', async () => {
     const result = await extractAll('repo-1', 'prepare-lib', 'package.json\nsrc/index.ts', [
       {
