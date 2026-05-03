@@ -37,6 +37,14 @@ const analysis: ExtractionResult = {
   },
   functions: [functionDoc],
   dependencies: { express: '^4.22.1' },
+  security: {
+    riskLevel: 'low',
+    summary: 'No obvious suspicious indicators.',
+    findings: [],
+    dependencyRisks: [],
+    scannedFiles: ['package.json', 'src/index.ts'],
+    notes: [],
+  },
 };
 
 function repo(overrides: Partial<Repo> = {}): Repo {
@@ -105,10 +113,14 @@ describe('prompt builders', () => {
       analysis.functions,
       analysis.dependencies,
       'api',
-      runnability
+      runnability,
+      analysis.security,
+      'package.json\nsrc/index.ts',
+      '# API'
     );
 
     expect(prompt.user).toContain('RUNNABILITY:');
+    expect(prompt.user).toContain('SECURITY SCAN:');
     expect(prompt.user).toContain('Entry point: dev');
     expect(prompt.user).toContain('express');
     expect(prompt.schema).toMatchObject({ type: 'object' });

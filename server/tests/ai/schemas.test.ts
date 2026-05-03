@@ -51,8 +51,8 @@ describe('AI response schemas', () => {
     expect(parsed.dependencies).toEqual([]);
   });
 
-  it('caps function response arrays to eighty entries', () => {
-    const docs = Array.from({ length: 90 }, (_, index) => ({
+  it('caps function response arrays to one hundred sixty entries', () => {
+    const docs = Array.from({ length: 170 }, (_, index) => ({
       name: `fn${index}`,
       type: 'function',
       file: 'src/index.ts',
@@ -65,7 +65,7 @@ describe('AI response schemas', () => {
       dependencies: [],
     }));
 
-    expect(functionsResponseSchema.parse(docs)).toHaveLength(80);
+    expect(functionsResponseSchema.parse(docs)).toHaveLength(160);
   });
 
   it('requires non-empty AI README and chat replies', () => {

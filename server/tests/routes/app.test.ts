@@ -407,6 +407,14 @@ describe('backend routes', () => {
         overview: { oneLiner: 'Demo', summary: 'Demo', purpose: 'Demo', targetUsers: 'Developers' },
         functions: [],
         dependencies: {},
+        security: {
+          riskLevel: 'low',
+          summary: 'No obvious suspicious indicators.',
+          findings: [],
+          dependencyRisks: [],
+          scannedFiles: ['README.md'],
+          notes: [],
+        },
       },
       aiReadme: '# Demo',
       analysisSourceHash: 'existing',
@@ -414,6 +422,7 @@ describe('backend routes', () => {
 
     const files = [{ path: 'README.md', content: '# Demo' }];
     const first = await request(app).post('/api/ai/extract/repo-1').send({ fileTree: 'README.md', files }).expect(202);
+    await new Promise((resolve) => setImmediate(resolve));
     const updatedRepo = await getDoc('repos', 'repo-1');
 
     await setDoc('repos', 'repo-1', { ...updatedRepo, status: 'ready', aiReadme: '# Demo', analysisSourceHash: updatedRepo?.analysisSourceHash });
