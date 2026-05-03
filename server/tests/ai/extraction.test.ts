@@ -404,6 +404,57 @@ describe('extractAll fallback path', () => {
     ]));
   });
 
+  it('detects nodejs-goof code vulnerabilities without report/query exec noise', async () => {
+    const result = await extractAll('repo-1', 'nodejs-goof', 'package.json\nroutes/index.js\napp.js\nviews/admin.ejs\nmongoose-db.js\nsarif.json', [
+      {
+        path: 'package.json',
+        content: JSON.stringify({
+          name: 'goof',
+          scripts: { start: 'node app.js' },
+          dependencies: { express: '4.17.1', mongoose: '4.2.4' },
+        }),
+      },
+      {
+        path: 'routes/index.js',
+        content: [
+          "var exec = require('child_process').exec;",
+          "User.find({ username: req.body.username, password: req.body.password }).exec(function (err, users) { res.json(users); });",
+          "res.redirect(req.body.redirectPage);",
+          "res.render('account_details', req.body);",
+        ].join('\n'),
+      },
+      {
+        path: 'app.js',
+        content: "app.use(session({ secret: 'keyboard cat', name: 'connect.sid', cookie: { secure: true } }))",
+      },
+      {
+        path: 'views/admin.ejs',
+        content: '<input type="hidden" name="redirectPage" value="<%- redirectPage %>" />',
+      },
+      {
+        path: 'mongoose-db.js',
+        content: "User.find({ username: 'admin@snyk.io' }).exec(function (err, users) { return users; });",
+      },
+      {
+        path: 'sarif.json',
+        content: JSON.stringify({ line: 'let term = pty.spawn(shell, [], {})' }),
+      },
+    ]);
+
+    expect(result.analysis.security.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Shell or process execution path detected', file: 'routes/index.js' }),
+      expect.objectContaining({ title: 'Possible NoSQL injection', file: 'routes/index.js' }),
+      expect.objectContaining({ title: 'Possible open redirect', file: 'routes/index.js' }),
+      expect.objectContaining({ title: 'Untrusted template render context', file: 'routes/index.js' }),
+      expect.objectContaining({ title: 'Hardcoded session secret', file: 'app.js' }),
+      expect.objectContaining({ title: 'Raw template output detected', file: 'views/admin.ejs' }),
+    ]));
+    expect(result.analysis.security.findings).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Shell or process execution path detected', file: 'mongoose-db.js' }),
+      expect.objectContaining({ title: 'Shell or process execution path detected', file: 'sarif.json' }),
+    ]));
+  });
+
   it('keeps harmless prepare build scripts low risk', async () => {
     const result = await extractAll('repo-1', 'prepare-lib', 'package.json\nsrc/index.ts', [
       {
