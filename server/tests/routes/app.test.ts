@@ -497,6 +497,51 @@ describe('backend routes', () => {
     expect(extraction.body).toMatchObject({ success: true, extractionId: 'repo-1', status: 'analyzing', aiReadmeStatus: 'pending' });
   });
 
+  it('returns runtime profile fields with completed extraction state', async () => {
+    await setDoc('repos', 'repo-1', repo({
+      status: 'ready',
+      runnability: {
+        canRun: true,
+        entryPoint: 'dev',
+        autoCommand: 'npm run dev',
+        manualCommands: [{ command: 'npm test', label: 'Run tests', reason: 'Validate without a preview.', confidence: 'high' }],
+        runtimeProfile: {
+          projectKind: 'preview-app',
+          supportLevel: 'auto-preview',
+          previewExpected: true,
+          autoCommand: 'npm run dev',
+          manualCommands: [{ command: 'npm test', label: 'Run tests', reason: 'Validate without a preview.', confidence: 'high' }],
+          evidence: ['frontend framework or file indicators'],
+          reasoning: 'Frontend app indicators and a preview script were found.',
+        },
+        blockers: [],
+      },
+      analysis: {
+        techStack: { language: 'TypeScript', framework: 'React', runtime: 'Node.js', buildTool: 'Vite', testingFramework: 'Vitest', database: null, otherTools: [] },
+        overview: { oneLiner: 'Demo', summary: 'Demo', purpose: 'Demo', targetUsers: 'Developers' },
+        functions: [],
+        dependencies: { vite: '^7.2.4' },
+        security: securityScan(),
+      },
+      aiReadme: '# Demo',
+    }));
+
+    const extraction = await request(app).get('/api/ai/extract/repo-1').expect(200);
+
+    expect(extraction.body.runnability).toMatchObject({
+      canRun: true,
+      entryPoint: 'dev',
+      autoCommand: 'npm run dev',
+      manualCommands: [expect.objectContaining({ command: 'npm test' })],
+      runtimeProfile: {
+        projectKind: 'preview-app',
+        supportLevel: 'auto-preview',
+        previewExpected: true,
+        autoCommand: 'npm run dev',
+      },
+    });
+  });
+
   it('validates extraction requests and missing repos', async () => {
     await request(app)
       .post('/api/ai/extract/missing')
