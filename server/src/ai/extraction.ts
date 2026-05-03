@@ -37,6 +37,7 @@ import {
   techStackResponseSchema,
   type AiReadmeResponse,
 } from './schemas';
+import { detectExternalServiceHints, detectKnownDependencyRisks, type ExternalServiceHint } from './securityIntel';
 
 export interface ExtractionFile {
   path: string;
@@ -530,6 +531,18 @@ function addManualCommand(
   commands.push({ command, label, reason, confidence });
 }
 
+function addRuntimeManualCommand(
+  profile: RepoRuntimeProfile,
+  command: string,
+  label: string,
+  reason: string,
+  confidence: RuntimeCommandConfidence
+): RepoRuntimeProfile {
+  const manualCommands = [...profile.manualCommands];
+  addManualCommand(manualCommands, command, label, reason, confidence);
+  return { ...profile, manualCommands };
+}
+
 function obviousNodeEntry(files: ExtractionFile[]): string | null {
   const filePaths = new Set(files.map((file) => file.path));
   return directNodeEntries.find((entry) => filePaths.has(entry)) || null;
@@ -688,10 +701,37 @@ function buildRunnability(packageMetadata: PackageMetadata, files: ExtractionFil
   const blockers: string[] = [];
   const blockerDetails: RunnabilityBlocker[] = [];
   const entryPoint = runScriptPriority.find((scriptName) => Boolean(packageMetadata.scripts[scriptName])) || null;
-  const runtimeProfile = buildRuntimeProfile(packageMetadata, files);
+  let runtimeProfile = buildRuntimeProfile(packageMetadata, files);
+  const externalServices = detectExternalServiceHints(files, packageMetadata.dependencies, packageMetadata.devDependencies);
   const dependencies = { ...packageMetadata.dependencies, ...packageMetadata.devDependencies };
   const blockedDependencies = nativeDependencyBlocklist.filter((dependency) => Boolean(dependencies[dependency]));
   const previewPaths = detectPreviewPaths(files);
+
+  if (externalServices.length > 0 && runtimeProfile.supportLevel === 'auto-preview') {
+    const serviceNames = externalServices.map((hint) => hint.service).join(', ');
+
+    if (entryPoint) {
+      runtimeProfile = addRuntimeManualCommand(
+        runtimeProfile,
+        npmRunCommand(entryPoint),
+        'Run server with external services',
+        `This command may work only after required external services are available: ${serviceNames}.`,
+        'medium'
+      );
+    }
+
+    runtimeProfile = {
+      ...runtimeProfile,
+      supportLevel: 'manual-only',
+      previewExpected: false,
+      autoCommand: null,
+      evidence: [
+        ...runtimeProfile.evidence,
+        ...externalServices.map((hint) => `requires ${hint.service}: ${hint.evidence}`),
+      ],
+      reasoning: `${runtimeProfile.reasoning} External service requirements were detected, so DevHub will not auto-start it without manual review.`,
+    };
+  }
 
   if (!packageMetadata.hasPackageJson) {
     blockers.push('No readable package.json found at repo root');
@@ -751,6 +791,19 @@ function buildRunnability(packageMetadata: PackageMetadata, files: ExtractionFil
       recommendation:
         'Replace these packages with WebAssembly/browser-friendly alternatives, make them optional for preview mode, or keep the repo analysis-only.',
       evidence: blockedDependencies.join(', '),
+    });
+  }
+  if (externalServices.length > 0) {
+    const serviceNames = externalServices.map((hint) => hint.service).join(', ');
+    blockers.push(`External service required: ${serviceNames}`);
+    blockerDetails.push({
+      code: 'external-service-required',
+      severity: 'warning',
+      title: 'External service required',
+      description:
+        `This repository appears to require ${serviceNames}. DevHub BrowserPod runs the Node process, but it does not automatically start databases or other companion services.`,
+      recommendation: externalServices.map((hint) => hint.recommendation).join(' '),
+      evidence: externalServices.map((hint) => `${hint.service}: ${hint.evidence}`).join('; '),
     });
   }
 
@@ -968,6 +1021,7 @@ function buildFallbackSecurityScan(files: ExtractionFile[], packageMetadata: Pac
   const dependencyEntries = Object.entries({ ...packageMetadata.dependencies, ...packageMetadata.devDependencies });
 
   dependencyRisks.push(...detectKnownLockfileRisks(files));
+  dependencyRisks.push(...detectKnownDependencyRisks(files));
 
   for (const [packageName, version] of dependencyEntries) {
     if (!suspiciousDependencyNames.has(packageName)) {
@@ -1078,16 +1132,23 @@ function buildFallbackSecurityScan(files: ExtractionFile[], packageMetadata: Pac
     }
   }
 
-  const riskLevel = highestSeverity([...findings.map((finding) => finding.severity), ...dependencyRisks.map((risk) => risk.severity)]);
+  const uniqueDependencyRisks = new Map<string, SecurityScan['dependencyRisks'][number]>();
+
+  for (const risk of dependencyRisks) {
+    uniqueDependencyRisks.set(`${risk.packageName}:${risk.version}:${risk.risk}`, risk);
+  }
+
+  const dedupedDependencyRisks = [...uniqueDependencyRisks.values()];
+  const riskLevel = highestSeverity([...findings.map((finding) => finding.severity), ...dedupedDependencyRisks.map((risk) => risk.severity)]);
 
   return {
     riskLevel: riskLevel === 'unknown' ? 'low' : riskLevel,
     summary:
       findings.length || dependencyRisks.length
-        ? `Local scan found ${findings.length} code/script findings and ${dependencyRisks.length} dependency items that need review.`
+        ? `Local scan found ${findings.length} code/script findings and ${dedupedDependencyRisks.length} dependency items that need review.`
         : 'No obvious malicious package, install-script, secret, execution, or obfuscation indicators were found in the sampled files. This is not a full malware scan.',
     findings: findings.slice(0, 80),
-    dependencyRisks: dependencyRisks.slice(0, 60),
+      dependencyRisks: dedupedDependencyRisks.slice(0, 60),
     scannedFiles: files.map((file) => file.path).slice(0, 120),
     notes: ['Security scan is evidence-based on files sent to extraction and should be paired with dependency audit tooling before release.'],
   };

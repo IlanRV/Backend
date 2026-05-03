@@ -89,6 +89,7 @@ export type RunnabilityBlockerCode =
   | 'missing-package-json'
   | 'missing-run-script'
   | 'unsupported-native-dependency'
+  | 'external-service-required'
   | 'not-preview-app'
   | 'manual-only-repo'
   | 'analysis-only-repo';
