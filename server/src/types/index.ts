@@ -233,7 +233,15 @@ export interface ChatMessage {
   messageId: string;
   scopeType: 'repo' | 'workspace';
   scopeId: string;
+  conversationId: string;
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
+}
+
+export interface ChatConversationSummary {
+  conversationId: string;
+  title: string;
+  updatedAt: string;
+  messageCount: number;
 }

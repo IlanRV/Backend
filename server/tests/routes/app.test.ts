@@ -651,13 +651,41 @@ describe('backend routes', () => {
     await setDoc('repos', 'repo-1', repo());
 
     const first = await request(app).post('/api/chat/repo/repo-1').send({ message: 'Explain this repo' }).expect(200);
-    expect(first.body).toEqual({ reply: 'AI reply', degraded: false });
+    expect(first.body).toEqual({ reply: 'AI reply', degraded: false, conversationId: 'default' });
 
     const duplicate = await request(app).post('/api/chat/repo/repo-1').send({ message: 'Explain this repo' }).expect(200);
-    expect(duplicate.body).toEqual({ reply: 'AI reply', degraded: false, cached: true });
+    expect(duplicate.body).toEqual({ reply: 'AI reply', degraded: false, cached: true, conversationId: 'default' });
 
     const history = await request(app).get('/api/chat/repo/repo-1').expect(200);
-    expect(history.body.map((message: any) => message.role)).toEqual(['user', 'assistant']);
+    expect(history.body.messages.map((message: any) => message.role)).toEqual(['user', 'assistant']);
+  });
+
+  it('keeps repo chat conversations separate and clears one conversation', async () => {
+    await setDoc('repos', 'repo-1', repo());
+
+    await request(app).post('/api/chat/repo/repo-1').send({ message: 'Default chat' }).expect(200);
+    await request(app)
+      .post('/api/chat/repo/repo-1')
+      .send({ message: 'Second thread', conversationId: 'thread-2' })
+      .expect(200);
+
+    const conversations = await request(app).get('/api/chat/repo/repo-1/conversations').expect(200);
+    expect(conversations.body.conversations).toEqual([
+      expect.objectContaining({ conversationId: 'thread-2', title: 'Second thread', messageCount: 2 }),
+      expect.objectContaining({ conversationId: 'default', title: 'Default chat', messageCount: 2 }),
+    ]);
+
+    const secondHistory = await request(app).get('/api/chat/repo/repo-1').query({ conversationId: 'thread-2' }).expect(200);
+    expect(secondHistory.body.messages.map((message: any) => message.content)).toEqual(['Second thread', 'AI reply']);
+
+    const cleared = await request(app).delete('/api/chat/repo/repo-1').query({ conversationId: 'thread-2' }).expect(200);
+    expect(cleared.body).toEqual({ success: true, conversationId: 'thread-2', deletedCount: 2 });
+
+    const afterClear = await request(app).get('/api/chat/repo/repo-1').query({ conversationId: 'thread-2' }).expect(200);
+    expect(afterClear.body.messages).toEqual([]);
+
+    const defaultHistory = await request(app).get('/api/chat/repo/repo-1').expect(200);
+    expect(defaultHistory.body.messages.map((message: any) => message.content)).toEqual(['Default chat', 'AI reply']);
   });
 
   it('validates chat requests and missing chat scopes', async () => {
@@ -685,9 +713,9 @@ describe('backend routes', () => {
     await setDoc('repos', 'repo-1', repo());
 
     const response = await request(app).post('/api/chat/workspace/workspace-1').send({ message: 'Summarize' }).expect(200);
-    expect(response.body).toEqual({ reply: 'AI reply', degraded: false });
+    expect(response.body).toEqual({ reply: 'AI reply', degraded: false, conversationId: 'default' });
 
     const history = await request(app).get('/api/chat/workspace/workspace-1').expect(200);
-    expect(history.body).toHaveLength(2);
+    expect(history.body.messages).toHaveLength(2);
   });
 });
