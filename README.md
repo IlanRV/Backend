@@ -13,13 +13,13 @@ DevHub is built around a simple workflow:
 3. Clone and inspect repo files in BrowserPod.
 4. Send the repo source snapshot to the backend for AI extraction.
 5. Generate:
-	- tech stack detection
-	- high-level repo overview
-	- function and class summaries
-	- dependency inventory
-	- security findings
-	- AI README content
-	- runnability and runtime profile guidance
+   - tech stack detection
+   - high-level repo overview
+   - function and class summaries
+   - dependency inventory
+   - security findings
+   - AI README content
+   - runnability and runtime profile guidance
 6. Run supported repos in BrowserPod.
 7. Ask AI questions about one repo or the whole workspace.
 8. Delete repos or workspaces when they are no longer needed.
