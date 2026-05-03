@@ -199,6 +199,7 @@ describe('extractAll fallback path', () => {
             name: '@project/frontend',
             scripts: { dev: 'next dev', start: 'npm run build && next start' },
             dependencies: { next: '12.1.0', react: '17.0.2', 'react-dom': '17.0.2' },
+            devDependencies: { typescript: '4.6.2' },
           }),
         },
         {
