@@ -55,16 +55,43 @@ export interface RepoFile {
 export interface RunnabilityResult {
   canRun: boolean;
   entryPoint: string | null;
+  autoCommand?: string | null;
+  manualCommands?: RuntimeCommandSuggestion[];
+  runtimeProfile?: RepoRuntimeProfile;
   blockers: string[];
   blockerDetails?: RunnabilityBlocker[];
   previewPath?: string;
   previewPaths?: string[];
 }
 
+export type RepoProjectKind = 'preview-app' | 'api-server' | 'library' | 'cli' | 'test-only' | 'unknown';
+export type RepoRuntimeSupportLevel = 'auto-preview' | 'manual-only' | 'analysis-only';
+export type RuntimeCommandConfidence = 'high' | 'medium' | 'low';
+
+export interface RuntimeCommandSuggestion {
+  command: string;
+  label: string;
+  reason: string;
+  confidence: RuntimeCommandConfidence;
+}
+
+export interface RepoRuntimeProfile {
+  projectKind: RepoProjectKind;
+  supportLevel: RepoRuntimeSupportLevel;
+  previewExpected: boolean;
+  autoCommand: string | null;
+  manualCommands: RuntimeCommandSuggestion[];
+  evidence: string[];
+  reasoning: string;
+}
+
 export type RunnabilityBlockerCode =
   | 'missing-package-json'
   | 'missing-run-script'
-  | 'unsupported-native-dependency';
+  | 'unsupported-native-dependency'
+  | 'not-preview-app'
+  | 'manual-only-repo'
+  | 'analysis-only-repo';
 
 export type RunnabilityBlockerSeverity = 'info' | 'warning' | 'error';
 

@@ -6,6 +6,7 @@ import type {
   ExtractionResult,
   FunctionDoc,
   Overview,
+  RepoRuntimeProfile,
   RunnabilityBlocker,
   Repo,
   RunnabilityResult,
@@ -337,10 +338,23 @@ function choosePreviewPath(paths: string[]): string | undefined {
   );
 }
 
+function buildRuntimeProfile(_packageMetadata: PackageMetadata, _files: ExtractionFile[]): RepoRuntimeProfile {
+  return {
+    projectKind: 'unknown',
+    supportLevel: 'analysis-only',
+    previewExpected: false,
+    autoCommand: null,
+    manualCommands: [],
+    evidence: [],
+    reasoning: 'Runtime profile inference has not found enough evidence yet.',
+  };
+}
+
 function buildRunnability(packageMetadata: PackageMetadata, files: ExtractionFile[]): RunnabilityResult {
   const blockers: string[] = [];
   const blockerDetails: RunnabilityBlocker[] = [];
   const entryPoint = runScriptPriority.find((scriptName) => Boolean(packageMetadata.scripts[scriptName])) || null;
+  const runtimeProfile = buildRuntimeProfile(packageMetadata, files);
   const dependencies = { ...packageMetadata.dependencies, ...packageMetadata.devDependencies };
   const blockedDependencies = nativeDependencyBlocklist.filter((dependency) => Boolean(dependencies[dependency]));
   const previewPaths = detectPreviewPaths(files);
@@ -388,8 +402,11 @@ function buildRunnability(packageMetadata: PackageMetadata, files: ExtractionFil
   }
 
   const result: RunnabilityResult = {
-    canRun: blockers.length === 0,
+    canRun: runtimeProfile.supportLevel === 'auto-preview' && blockers.length === 0,
     entryPoint,
+    autoCommand: runtimeProfile.autoCommand,
+    manualCommands: runtimeProfile.manualCommands,
+    runtimeProfile,
     blockers,
     blockerDetails,
   };
