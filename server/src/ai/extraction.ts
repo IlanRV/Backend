@@ -56,6 +56,7 @@ export interface ExtractAllOptions {
 
 interface PackageMetadata {
   hasPackageJson: boolean;
+  path?: string;
   name?: string;
   description?: string;
   main?: string;
@@ -69,6 +70,15 @@ interface PackageMetadata {
   engines: {
     node?: string;
   };
+  workspacePackages: WorkspacePackageMetadata[];
+}
+
+interface WorkspacePackageMetadata {
+  root: string;
+  name?: string;
+  scripts: Record<string, string>;
+  dependencies: Record<string, string>;
+  devDependencies: Record<string, string>;
 }
 
 const sourceExtensions = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.py']);
@@ -85,7 +95,23 @@ const nativeDependencyBlocklist = [
   'sharp',
   'sqlite3',
 ];
-const runScriptPriority = ['dev', 'start', 'serve'] as const;
+const runScriptPriority = [
+  'dev',
+  'start',
+  'serve',
+  'dev:frontend',
+  'start:frontend',
+  'dev:web',
+  'start:web',
+  'dev:client',
+  'start:client',
+  'dev:app',
+  'start:app',
+  'dev:backend',
+  'start:backend',
+  'dev:server',
+  'start:server',
+] as const;
 const routeScanExtensions = new Set(['.js', '.jsx', '.ts', '.tsx']);
 const frontendDependencyNames = [
   'vite',
@@ -243,11 +269,37 @@ function parseJsonObject(content: string): Record<string, unknown> {
 }
 
 function findPackageJson(files: ExtractionFile[]): ExtractionFile | undefined {
-  return files.find((file) => basename(file.path) === 'package.json' && !file.path.includes('node_modules/'));
+  const candidates = files.filter((file) => basename(file.path) === 'package.json' && !file.path.includes('node_modules/'));
+  return candidates.find((file) => file.path === 'package.json') ?? candidates[0];
+}
+
+function packageRoot(path: string): string {
+  return path === 'package.json' ? '' : path.replace(/\/package\.json$/i, '');
+}
+
+function getWorkspacePackages(files: ExtractionFile[]): WorkspacePackageMetadata[] {
+  return files
+    .filter((file) => basename(file.path) === 'package.json' && !file.path.includes('node_modules/'))
+    .map((file) => {
+      const parsed = parseJsonObject(file.content);
+      return {
+        root: packageRoot(file.path),
+        name: typeof parsed.name === 'string' ? parsed.name : undefined,
+        scripts: readStringRecord(parsed.scripts),
+        dependencies: readStringRecord(parsed.dependencies),
+        devDependencies: readStringRecord(parsed.devDependencies),
+      };
+    })
+    .filter((pkg) => Object.keys(pkg.scripts).length || Object.keys(pkg.dependencies).length || Object.keys(pkg.devDependencies).length || pkg.name);
+}
+
+function mergeDependencyRecords(packages: WorkspacePackageMetadata[], field: 'dependencies' | 'devDependencies'): Record<string, string> {
+  return packages.reduce<Record<string, string>>((merged, pkg) => ({ ...merged, ...pkg[field] }), {});
 }
 
 function getPackageMetadata(files: ExtractionFile[]): PackageMetadata {
   const packageFile = findPackageJson(files);
+  const workspacePackages = getWorkspacePackages(files);
 
   if (!packageFile) {
     return {
@@ -258,6 +310,7 @@ function getPackageMetadata(files: ExtractionFile[]): PackageMetadata {
       dependencies: {},
       devDependencies: {},
       engines: {},
+      workspacePackages,
     };
   }
 
@@ -272,6 +325,7 @@ function getPackageMetadata(files: ExtractionFile[]): PackageMetadata {
 
   return {
     hasPackageJson: Object.keys(parsed).length > 0,
+    path: packageFile.path,
     name,
     description: typeof parsed.description === 'string' ? parsed.description : undefined,
     main: typeof parsed.main === 'string' ? parsed.main : undefined,
@@ -280,9 +334,10 @@ function getPackageMetadata(files: ExtractionFile[]): PackageMetadata {
     hasExports: parsed.exports !== undefined,
     bin,
     scripts: readStringRecord(parsed.scripts),
-    dependencies: readStringRecord(parsed.dependencies),
-    devDependencies: readStringRecord(parsed.devDependencies),
+    dependencies: mergeDependencyRecords(workspacePackages, 'dependencies'),
+    devDependencies: mergeDependencyRecords(workspacePackages, 'devDependencies'),
     engines,
+    workspacePackages,
   };
 }
 
@@ -553,6 +608,21 @@ function addRuntimeManualCommand(
   return { ...profile, manualCommands };
 }
 
+function scriptLabel(scriptName: string): string {
+  if (/frontend|client|web|app/i.test(scriptName)) {
+    return scriptName.startsWith('start') ? 'Start frontend' : 'Run frontend';
+  }
+  if (/backend|server|api/i.test(scriptName)) {
+    return scriptName.startsWith('start') ? 'Start backend' : 'Run backend';
+  }
+
+  return `Run ${scriptName}`;
+}
+
+function isWorkspaceRunScript(scriptName: string): boolean {
+  return /^(dev|start):(frontend|client|web|app|backend|server|api)$/i.test(scriptName);
+}
+
 function obviousNodeEntry(files: ExtractionFile[]): string | null {
   const filePaths = new Set(files.map((file) => file.path));
   return directNodeEntries.find((entry) => filePaths.has(entry)) || null;
@@ -571,6 +641,16 @@ function buildManualCommands(packageMetadata: PackageMetadata, files: Extraction
     addManualCommand(commands, 'npm run coverage', 'Run coverage', 'The coverage script can validate test behavior without a preview.', 'medium');
   }
 
+  for (const scriptName of Object.keys(packageMetadata.scripts).filter(isWorkspaceRunScript)) {
+    addManualCommand(
+      commands,
+      npmRunCommand(scriptName),
+      scriptLabel(scriptName),
+      'The root package exposes this npm workspace command, so it can be run manually in the BrowserPod sandbox.',
+      'medium'
+    );
+  }
+
   const firstBin = Object.entries(packageMetadata.bin)[0];
   if (firstBin) {
     const [, binPath] = firstBin;
@@ -583,6 +663,54 @@ function buildManualCommands(packageMetadata: PackageMetadata, files: Extraction
   }
 
   return commands;
+}
+
+function normalizeWorkspaceReference(value: string): string {
+  return value.replace(/^\.\//, '').replace(/\/$/, '');
+}
+
+function workspacePackageMatches(pkg: WorkspacePackageMetadata, value: string): boolean {
+  const normalized = normalizeWorkspaceReference(value);
+  return normalizeWorkspaceReference(pkg.root) === normalized || pkg.name === value;
+}
+
+function findWorkspacePackageForScript(
+  packageMetadata: PackageMetadata,
+  scriptName: string | null,
+  command: string | undefined
+): WorkspacePackageMetadata | undefined {
+  if (!scriptName && !command) {
+    return undefined;
+  }
+
+  const workspaceMatch = /--workspace(?:=|\s+)([^\s]+)/.exec(command ?? '');
+  if (workspaceMatch) {
+    return packageMetadata.workspacePackages.find((pkg) => workspacePackageMatches(pkg, workspaceMatch[1]));
+  }
+
+  const hint = `${scriptName ?? ''} ${command ?? ''}`.toLowerCase();
+  if (/frontend|client|web/.test(hint)) {
+    return packageMetadata.workspacePackages.find((pkg) => /frontend|client|web/.test(`${pkg.root} ${pkg.name ?? ''}`.toLowerCase()));
+  }
+  if (/backend|server|api/.test(hint)) {
+    return packageMetadata.workspacePackages.find((pkg) => /backend|server|api/.test(`${pkg.root} ${pkg.name ?? ''}`.toLowerCase()));
+  }
+
+  return undefined;
+}
+
+function runtimeDependencies(packageMetadata: PackageMetadata, scriptName: string | null): Record<string, string> {
+  const targetPackage = findWorkspacePackageForScript(
+    packageMetadata,
+    scriptName,
+    scriptName ? packageMetadata.scripts[scriptName] : undefined
+  );
+
+  if (!targetPackage) {
+    return allDependencies(packageMetadata);
+  }
+
+  return { ...targetPackage.dependencies, ...targetPackage.devDependencies };
 }
 
 function runtimeReason(kind: RepoProjectKind, evidence: string[]): string {
@@ -616,6 +744,7 @@ function buildRuntimeProfile(packageMetadata: PackageMetadata, files: Extraction
   const testOnly = isTestOnlyProject(packageMetadata) && !frontend && !apiServer && !cli && !library;
   const evidence = [
     packageMetadata.name ? `package: ${packageMetadata.name}` : '',
+    packageMetadata.workspacePackages.length > 1 ? `workspace packages: ${packageMetadata.workspacePackages.length}` : '',
     scriptName ? `preview script: ${scriptName}` : '',
     frontend ? 'frontend framework or file indicators' : '',
     apiServer ? 'HTTP server or route indicators' : '',
@@ -713,7 +842,7 @@ function buildRunnability(packageMetadata: PackageMetadata, files: ExtractionFil
   const entryPoint = runScriptPriority.find((scriptName) => Boolean(packageMetadata.scripts[scriptName])) || null;
   let runtimeProfile = buildRuntimeProfile(packageMetadata, files);
   const externalServices = detectExternalServiceHints(files, packageMetadata.dependencies, packageMetadata.devDependencies);
-  const dependencies = { ...packageMetadata.dependencies, ...packageMetadata.devDependencies };
+  const dependencies = runtimeDependencies(packageMetadata, entryPoint);
   const blockedDependencies = nativeDependencyBlocklist.filter((dependency) => Boolean(dependencies[dependency]));
   const previewPaths = detectPreviewPaths(files);
 
