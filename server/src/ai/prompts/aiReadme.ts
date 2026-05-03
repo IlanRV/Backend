@@ -38,6 +38,12 @@ export function buildAiReadmePrompt(
         })
         .join('\n')
     : runnability.blockers.join('; ') || 'None detected';
+  const manualCommandsText = runnability.manualCommands?.length
+    ? runnability.manualCommands
+        .map((command) => `- ${command.command} (${command.confidence}): ${command.reason}`)
+        .join('\n')
+    : 'None detected';
+  const runtimeProfile = runnability.runtimeProfile;
   const securityText = [
     `- Overall risk: ${security.riskLevel}`,
     `- Summary: ${security.summary}`,
@@ -94,6 +100,14 @@ ${securityText || 'No security scan data found.'}
 RUNNABILITY:
 - Can run in BrowserPod: ${runnability.canRun ? 'yes' : 'no'}
 - Entry point: ${runnability.entryPoint || 'None detected'}
+- Auto command: ${runnability.autoCommand || runtimeProfile?.autoCommand || 'None detected'}
+- Project kind: ${runtimeProfile?.projectKind || 'unknown'}
+- Runtime support level: ${runtimeProfile?.supportLevel || 'analysis-only'}
+- Preview expected: ${runtimeProfile?.previewExpected ? 'yes' : 'no'}
+- Runtime reasoning: ${runtimeProfile?.reasoning || 'No runtime profile reasoning available.'}
+- Runtime evidence: ${runtimeProfile?.evidence.join('; ') || 'None detected'}
+- Manual commands:
+${manualCommandsText}
 - Blockers: ${runnability.blockers.join('; ') || 'None detected'}
 - Blocker details:
 ${blockerDetailsText}
@@ -137,7 +151,11 @@ Rules:
 - Reference actual function names, file paths, and dependencies.
 - Preserve useful existing README content when it is compatible with the extracted evidence.
 - Include exact setup and run commands only when they can be inferred from the available data.
-- If BrowserPod runnability has blockers, explain them plainly in Setup Instructions.
+- If Preview expected is yes, include "Run in BrowserPod with: ..." using the auto command.
+- If Project kind is library, say "This is a library, not a live preview app" and show suggested validation commands.
+- If Project kind is cli, say "This is a CLI/tooling repo, not a preview app" and show help/test commands.
+- If Project kind is unknown, say "No reliable preview command could be inferred" and show manual suggestions if any.
+- If BrowserPod runnability has blockers, explain them plainly in Setup Instructions without making non-preview repos sound broken.
 - Include a meaningful API Reference even for frontend utilities/components: group documented functions, components, hooks, route handlers, and services by file.
 - Include Security Notes based only on the security scan evidence above.
 - Do not list environment variables unless they are strongly implied by code, config names, or dependency usage.

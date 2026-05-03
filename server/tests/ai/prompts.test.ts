@@ -106,7 +106,22 @@ describe('prompt builders', () => {
   });
 
   it('builds README prompts with runnability and dependency context', () => {
-    const runnability: RunnabilityResult = { canRun: true, entryPoint: 'dev', blockers: [] };
+    const runnability: RunnabilityResult = {
+      canRun: true,
+      entryPoint: 'dev',
+      autoCommand: 'npm run dev',
+      manualCommands: [{ command: 'npm test', label: 'Run tests', reason: 'Validate without a preview.', confidence: 'high' }],
+      runtimeProfile: {
+        projectKind: 'api-server',
+        supportLevel: 'auto-preview',
+        previewExpected: true,
+        autoCommand: 'npm run dev',
+        manualCommands: [{ command: 'npm test', label: 'Run tests', reason: 'Validate without a preview.', confidence: 'high' }],
+        evidence: ['HTTP server or route indicators'],
+        reasoning: 'Server framework indicators and a startable script were found.',
+      },
+      blockers: [],
+    };
     const prompt = buildAiReadmePrompt(
       analysis.techStack,
       analysis.overview,
@@ -122,6 +137,9 @@ describe('prompt builders', () => {
     expect(prompt.user).toContain('RUNNABILITY:');
     expect(prompt.user).toContain('SECURITY SCAN:');
     expect(prompt.user).toContain('Entry point: dev');
+    expect(prompt.user).toContain('Auto command: npm run dev');
+    expect(prompt.user).toContain('Project kind: api-server');
+    expect(prompt.user).toContain('Manual commands:');
     expect(prompt.user).toContain('express');
     expect(prompt.schema).toMatchObject({ type: 'object' });
   });
