@@ -33,6 +33,24 @@ function withDocumentId<T extends FirebaseFirestore.DocumentData>(
 function createFirestore(): FirebaseFirestore.Firestore {
   const { projectId, privateKey, clientEmail } = config.firebase;
 
+  // Debug: log key format (without exposing the full key)
+  const keyLen = privateKey.length;
+  const hasHeader = privateKey.includes('-----BEGIN PRIVATE KEY-----');
+  const hasFooter = privateKey.includes('-----END PRIVATE KEY-----');
+  const hasNewlines = privateKey.includes('\n');
+  const lineCount = privateKey.split('\n').length;
+
+  logger.info('firebase_credentials_check', {
+    hasProjectId: Boolean(projectId),
+    keyLength: keyLen,
+    hasHeader,
+    hasFooter,
+    hasNewlines,
+    lineCount,
+    clientEmail,
+    projectId,
+  });
+
   if (!projectId || !privateKey || !clientEmail) {
     logger.error('firebase_credentials_missing', {
       hasProjectId: Boolean(projectId),
