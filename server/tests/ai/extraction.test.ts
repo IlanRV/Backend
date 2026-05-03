@@ -96,6 +96,50 @@ describe('extractAll fallback path', () => {
     expect(result.runnability.canRun).toBe(false);
     expect(result.runnability.blockers).toContain('No readable package.json found at repo root');
     expect(result.runnability.blockers).toContain('No runnable npm script found: expected "dev", "start", or "serve"');
+    expect(result.runnability.blockerDetails).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'missing-package-json',
+          severity: 'error',
+          title: 'No package.json found',
+          description: expect.stringContaining('DevHub could not find a readable package.json'),
+          recommendation: expect.stringContaining('Add a package.json'),
+        }),
+        expect.objectContaining({
+          code: 'missing-run-script',
+          severity: 'error',
+          title: 'No runnable npm script found',
+          description: expect.stringContaining('No dev, start, or serve script was found'),
+          recommendation: expect.stringContaining('Add a dev, start, or serve script'),
+        }),
+      ])
+    );
+  });
+
+  it('explains unsupported native dependency blockers for BrowserPod users', async () => {
+    const result = await extractAll('repo-1', 'native-app', 'package.json\nsrc/index.ts', [
+      {
+        path: 'package.json',
+        content: JSON.stringify({
+          name: 'native-app',
+          scripts: { dev: 'node src/index.js' },
+          dependencies: { express: '^4.22.1', sharp: '^0.33.0', sqlite3: '^5.1.7' },
+        }),
+      },
+      { path: 'src/index.ts', content: 'export function start() { return true; }' },
+    ]);
+
+    expect(result.runnability.canRun).toBe(false);
+    expect(result.runnability.blockerDetails).toContainEqual(
+      expect.objectContaining({
+        code: 'unsupported-native-dependency',
+        severity: 'warning',
+        title: 'Unsupported native dependency',
+        evidence: 'sharp, sqlite3',
+        description: expect.stringContaining('BrowserPod runs Node.js inside WebAssembly'),
+        recommendation: expect.stringContaining('Replace these packages'),
+      })
+    );
   });
 
   it('does not write analysis when the repo disappears before saving', async () => {

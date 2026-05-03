@@ -55,8 +55,25 @@ export interface RunnabilityResult {
   canRun: boolean;
   entryPoint: string | null;
   blockers: string[];
+  blockerDetails?: RunnabilityBlocker[];
   previewPath?: string;
   previewPaths?: string[];
+}
+
+export type RunnabilityBlockerCode =
+  | 'missing-package-json'
+  | 'missing-run-script'
+  | 'unsupported-native-dependency';
+
+export type RunnabilityBlockerSeverity = 'info' | 'warning' | 'error';
+
+export interface RunnabilityBlocker {
+  code: RunnabilityBlockerCode;
+  severity: RunnabilityBlockerSeverity;
+  title: string;
+  description: string;
+  recommendation: string;
+  evidence?: string;
 }
 
 export type AnalysisProgressPhase = 'queued' | 'scanning' | 'querying' | 'saving' | 'readme' | 'complete' | 'error';

@@ -6,6 +6,7 @@ import type {
   ExtractionResult,
   FunctionDoc,
   Overview,
+  RunnabilityBlocker,
   Repo,
   RunnabilityResult,
   SecurityConfidence,
@@ -338,6 +339,7 @@ function choosePreviewPath(paths: string[]): string | undefined {
 
 function buildRunnability(packageMetadata: PackageMetadata, files: ExtractionFile[]): RunnabilityResult {
   const blockers: string[] = [];
+  const blockerDetails: RunnabilityBlocker[] = [];
   const entryPoint = runScriptPriority.find((scriptName) => Boolean(packageMetadata.scripts[scriptName])) || null;
   const dependencies = { ...packageMetadata.dependencies, ...packageMetadata.devDependencies };
   const blockedDependencies = nativeDependencyBlocklist.filter((dependency) => Boolean(dependencies[dependency]));
@@ -345,18 +347,51 @@ function buildRunnability(packageMetadata: PackageMetadata, files: ExtractionFil
 
   if (!packageMetadata.hasPackageJson) {
     blockers.push('No readable package.json found at repo root');
+    blockerDetails.push({
+      code: 'missing-package-json',
+      severity: 'error',
+      title: 'No package.json found',
+      description:
+        'DevHub could not find a readable package.json at the repository root, so it cannot infer install dependencies or npm run commands for BrowserPod.',
+      recommendation:
+        'Add a package.json at the project root, or send cached source files with a clear run command so DevHub can classify the project.',
+    });
   }
   if (!entryPoint) {
     blockers.push('No runnable npm script found: expected "dev", "start", or "serve"');
+    const availableScripts = Object.keys(packageMetadata.scripts);
+    blockerDetails.push({
+      code: 'missing-run-script',
+      severity: 'error',
+      title: 'No runnable npm script found',
+      description:
+        availableScripts.length > 0
+          ? `No dev, start, or serve script was found. Available npm scripts are: ${availableScripts.join(', ')}.`
+          : 'No dev, start, or serve script was found, so DevHub does not know which command should start a BrowserPod preview server.',
+      recommendation:
+        'Add a dev, start, or serve script that launches a local web server, or expose a manual command in the UI for this repository.',
+      ...(availableScripts.length > 0 ? { evidence: availableScripts.join(', ') } : {}),
+    });
   }
   if (blockedDependencies.length > 0) {
     blockers.push(`Unsupported native/runtime dependencies: ${blockedDependencies.join(', ')}`);
+    blockerDetails.push({
+      code: 'unsupported-native-dependency',
+      severity: 'warning',
+      title: 'Unsupported native dependency',
+      description:
+        'BrowserPod runs Node.js inside WebAssembly. Packages with native binaries or heavyweight runtime hooks often fail to install or execute inside the sandbox.',
+      recommendation:
+        'Replace these packages with WebAssembly/browser-friendly alternatives, make them optional for preview mode, or keep the repo analysis-only.',
+      evidence: blockedDependencies.join(', '),
+    });
   }
 
   const result: RunnabilityResult = {
     canRun: blockers.length === 0,
     entryPoint,
     blockers,
+    blockerDetails,
   };
 
   if (previewPaths.length > 0) {
@@ -549,6 +584,11 @@ function buildFallbackAiReadme(
     .slice(0, 40)
     .map(([name, version]) => `- ${name}: ${version}`)
     .join('\n');
+  const blockerDetailLines = runnability.blockerDetails?.length
+    ? runnability.blockerDetails
+        .map((blocker) => `- ${blocker.title}: ${blocker.description} Recommendation: ${blocker.recommendation}`)
+        .join('\n')
+    : '';
 
   return [
     `# ${title || repoName}`,
@@ -568,6 +608,7 @@ function buildFallbackAiReadme(
     runnability.canRun && runnability.entryPoint
       ? `Run with \`npm run ${runnability.entryPoint}\`.`
       : `Not automatically runnable: ${runnability.blockers.join('; ')}`,
+    blockerDetailLines,
     '',
     '## Notable Functions',
     functions.length

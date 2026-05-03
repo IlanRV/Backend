@@ -30,6 +30,14 @@ export function buildAiReadmePrompt(
   const depsText = Object.entries(dependencies)
     .map(([name, version]) => `- \`${name}\`: \`${version}\``)
     .join('\n');
+  const blockerDetailsText = runnability.blockerDetails?.length
+    ? runnability.blockerDetails
+        .map((blocker) => {
+          const evidence = blocker.evidence ? ` Evidence: ${blocker.evidence}.` : '';
+          return `- ${blocker.severity.toUpperCase()} ${blocker.title}: ${blocker.description} Recommendation: ${blocker.recommendation}.${evidence}`;
+        })
+        .join('\n')
+    : runnability.blockers.join('; ') || 'None detected';
   const securityText = [
     `- Overall risk: ${security.riskLevel}`,
     `- Summary: ${security.summary}`,
@@ -87,6 +95,8 @@ RUNNABILITY:
 - Can run in BrowserPod: ${runnability.canRun ? 'yes' : 'no'}
 - Entry point: ${runnability.entryPoint || 'None detected'}
 - Blockers: ${runnability.blockers.join('; ') || 'None detected'}
+- Blocker details:
+${blockerDetailsText}
 
 Write a README.md with these sections, in this order, and return it as the JSON field "markdown":
 
