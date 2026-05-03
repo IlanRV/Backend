@@ -120,6 +120,17 @@ function summarizeRuntimeSecurity(events: RuntimeSecurityEvent[]): RuntimeSecuri
   };
 }
 
+async function deleteRepoCascade(repo: Repo): Promise<void> {
+  await deleteDocsByQuery(
+    getCollection('chat_messages')
+      .where('scopeType', '==', 'repo' satisfies ChatMessage['scopeType'])
+      .where('scopeId', '==', repo.repoId)
+  );
+  await deleteDocsByQuery(getCollection('repo_files').where('repoId', '==', repo.repoId));
+  await deleteDocsByQuery(getCollection('repo_security_events').where('repoId', '==', repo.repoId));
+  await deleteDoc('repos', repo.repoId);
+}
+
 function getGithubRepoName(githubUrl: string): string | null {
   if (!githubUrl.startsWith('https://github.com/')) {
     return null;
@@ -221,14 +232,7 @@ router.delete(
       throw createHttpError(404, 'Repo not found');
     }
 
-    await deleteDocsByQuery(
-      getCollection('chat_messages')
-        .where('scopeType', '==', 'repo' satisfies ChatMessage['scopeType'])
-        .where('scopeId', '==', repo.repoId)
-    );
-    await deleteDocsByQuery(getCollection('repo_files').where('repoId', '==', repo.repoId));
-    await deleteDocsByQuery(getCollection('repo_security_events').where('repoId', '==', repo.repoId));
-    await deleteDoc('repos', repo.repoId);
+    await deleteRepoCascade(repo);
 
     logger.info('repo_deleted', {
       repoId: repo.repoId,
@@ -240,8 +244,28 @@ router.delete(
 
 router.delete(
   '/workspaces/:workspaceId/repos/:repoId',
-  asyncHandler(async () => {
-    throw createHttpError(501, 'Workspace-scoped repo deletion is not implemented yet');
+  asyncHandler(async (req, res) => {
+    const workspaceId = getRouteParam(req, 'workspaceId');
+    const repoId = getRouteParam(req, 'repoId');
+    const workspace = await getDoc<Workspace>('workspaces', workspaceId);
+
+    if (!workspace) {
+      throw createHttpError(404, 'Workspace not found');
+    }
+
+    const repo = await getDoc<Repo>('repos', repoId);
+
+    if (!repo || repo.workspaceId !== workspace.workspaceId) {
+      throw createHttpError(404, 'Repo not found');
+    }
+
+    await deleteRepoCascade(repo);
+
+    logger.info('repo_deleted', {
+      repoId: repo.repoId,
+      workspaceId: workspace.workspaceId,
+    });
+    res.json({ success: true, repoId: repo.repoId, workspaceId: workspace.workspaceId });
   })
 );
 
