@@ -37,6 +37,7 @@ function formatRepoAnalysis(repo: Repo): string {
   }
 
   const { overview, techStack, functions, dependencies } = repo.analysis;
+  const security = repo.analysis.security;
   const functionDocs = functions
     .slice(0, 40)
     .map(
@@ -67,6 +68,25 @@ function formatRepoAnalysis(repo: Repo): string {
     `Dependencies: ${formatDependencies(dependencies)}`,
     `Functions:\n${functionDocs || 'No function docs extracted.'}`,
     functions.length > 40 ? `Functions omitted from prompt: ${functions.length - 40}` : '',
+    security
+      ? [
+          'Security scan:',
+          `- Risk level: ${security.riskLevel}`,
+          `- Summary: ${security.summary}`,
+          `- Findings: ${security.findings.length}`,
+          ...security.findings
+            .slice(0, 16)
+            .map(
+              (finding) =>
+                `  - ${finding.severity.toUpperCase()} ${finding.category}: ${finding.title} in ${finding.file}${finding.line ? `:${finding.line}` : ''} (${finding.confidence} confidence)`
+            ),
+          security.findings.length > 16 ? `  - Security findings omitted from prompt: ${security.findings.length - 16}` : '',
+          `- Dependency risks: ${security.dependencyRisks.length}`,
+          ...security.dependencyRisks
+            .slice(0, 12)
+            .map((risk) => `  - ${risk.severity.toUpperCase()} ${risk.packageName}: ${risk.risk} (${risk.confidence} confidence)`),
+        ].filter(Boolean).join('\n')
+      : 'Security scan: No security scan has been generated yet.',
     repo.aiReadme ? `AI README excerpt:\n${truncateText(repo.aiReadme, 6000)}` : '',
   ]
     .filter(Boolean)

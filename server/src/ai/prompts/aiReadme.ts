@@ -1,4 +1,4 @@
-import type { FunctionDoc, Overview, RunnabilityResult, TechStack } from '../../types';
+import type { FunctionDoc, Overview, RunnabilityResult, SecurityScan, TechStack } from '../../types';
 
 interface PromptResult {
   system: string;
@@ -12,14 +12,36 @@ export function buildAiReadmePrompt(
   functions: FunctionDoc[],
   dependencies: Record<string, string>,
   repoName: string,
-  runnability: RunnabilityResult
+  runnability: RunnabilityResult,
+  security: SecurityScan,
+  fileTree: string,
+  originalReadme: string
 ): PromptResult {
   const functionsText = functions
-    .map((item) => `- \`${item.signature}\` in \`${item.file}\`:${item.line} - ${item.description}`)
+    .slice(0, 90)
+    .map((item) => {
+      const params = item.params.length
+        ? ` Params: ${item.params.map((param) => `${param.name}: ${param.type || 'unknown'}`).join(', ')}.`
+        : '';
+      const returns = item.returns.description ? ` Returns: ${item.returns.description}` : '';
+      return `- \`${item.signature}\` in \`${item.file}\`:${item.line} - ${item.description}${params}${returns}`;
+    })
     .join('\n');
   const depsText = Object.entries(dependencies)
     .map(([name, version]) => `- \`${name}\`: \`${version}\``)
     .join('\n');
+  const securityText = [
+    `- Overall risk: ${security.riskLevel}`,
+    `- Summary: ${security.summary}`,
+    ...security.findings.slice(0, 20).map(
+      (finding) =>
+        `- ${finding.severity.toUpperCase()} ${finding.category}: ${finding.title} in ${finding.file}${finding.line ? `:${finding.line}` : ''} - ${finding.evidence}`
+    ),
+    ...security.dependencyRisks.slice(0, 20).map(
+      (risk) =>
+        `- ${risk.severity.toUpperCase()} dependency ${risk.packageName}${risk.version ? `@${risk.version}` : ''}: ${risk.risk} - ${risk.reason}`
+    ),
+  ].join('\n');
 
   const system = [
     'You are a senior developer who writes practical README documentation for real repositories.',
@@ -45,11 +67,21 @@ OVERVIEW:
 - Target Users: ${overview.targetUsers}
 - Summary: ${overview.summary}
 
+FILE TREE:
+${fileTree.slice(0, 12000) || 'No file tree provided.'}
+
+EXISTING README EXCERPT:
+${originalReadme.slice(0, 8000) || 'No existing README was found.'}
+
 FUNCTIONS AND API:
 ${functionsText || 'No functions documented.'}
+${functions.length > 90 ? `\n...${functions.length - 90} additional function entries omitted from this prompt.` : ''}
 
 DEPENDENCIES:
 ${depsText || 'No dependencies found.'}
+
+SECURITY SCAN:
+${securityText || 'No security scan data found.'}
 
 RUNNABILITY:
 - Can run in BrowserPod: ${runnability.canRun ? 'yes' : 'no'}
@@ -81,6 +113,9 @@ Describe the likely folder structure and what each file or folder does.
 ## Dependencies
 Split into production and development dependencies when possible. Add brief descriptions for key dependencies.
 
+## Security Notes
+Summarize dependency/script/code security findings. Be careful and evidence-based; do not overstate low-confidence findings.
+
 ## Contributing
 Include concise development and contribution guidelines.
 
@@ -90,8 +125,11 @@ Note that the license should be confirmed by the project maintainer.
 Rules:
 - Be specific, not generic.
 - Reference actual function names, file paths, and dependencies.
+- Preserve useful existing README content when it is compatible with the extracted evidence.
 - Include exact setup and run commands only when they can be inferred from the available data.
 - If BrowserPod runnability has blockers, explain them plainly in Setup Instructions.
+- Include a meaningful API Reference even for frontend utilities/components: group documented functions, components, hooks, route handlers, and services by file.
+- Include Security Notes based only on the security scan evidence above.
 - Do not list environment variables unless they are strongly implied by code, config names, or dependency usage.
 - If information is missing, infer cautiously and say what maintainers should confirm.
 - Do not invent unsupported features.

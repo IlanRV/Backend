@@ -20,6 +20,7 @@ export interface Repo {
   analysisUpdatedAt?: string;
   analysisModel?: string | null;
   analysisError?: string | null;
+  analysisProgress?: AnalysisProgress | null;
   aiReadme: string | null;
   aiReadmeStatus?: 'pending' | 'ready' | 'error' | null;
   runnable?: boolean;
@@ -58,11 +59,66 @@ export interface RunnabilityResult {
   previewPaths?: string[];
 }
 
+export type AnalysisProgressPhase = 'queued' | 'scanning' | 'querying' | 'saving' | 'readme' | 'complete' | 'error';
+
+export interface AnalysisProgress {
+  phase: AnalysisProgressPhase;
+  percent: number;
+  message: string;
+  updatedAt: string;
+}
+
 export interface ExtractionResult {
   techStack: TechStack;
   overview: Overview;
   functions: FunctionDoc[];
   dependencies: Record<string, string>;
+  security: SecurityScan;
+}
+
+export type SecuritySeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';
+export type SecurityConfidence = 'high' | 'medium' | 'low';
+export type SecurityCategory =
+  | 'dependency'
+  | 'script'
+  | 'secret'
+  | 'network'
+  | 'execution'
+  | 'obfuscation'
+  | 'supply-chain'
+  | 'malware'
+  | 'config'
+  | 'other';
+
+export interface SecurityFinding {
+  title: string;
+  severity: SecuritySeverity;
+  category: SecurityCategory;
+  file: string;
+  line: number | null;
+  evidence: string;
+  impact: string;
+  recommendation: string;
+  confidence: SecurityConfidence;
+}
+
+export interface SecurityDependencyRisk {
+  packageName: string;
+  version: string | null;
+  severity: SecuritySeverity;
+  risk: string;
+  reason: string;
+  recommendation: string;
+  confidence: SecurityConfidence;
+}
+
+export interface SecurityScan {
+  riskLevel: SecuritySeverity | 'unknown';
+  summary: string;
+  findings: SecurityFinding[];
+  dependencyRisks: SecurityDependencyRisk[];
+  scannedFiles: string[];
+  notes: string[];
 }
 
 export interface TechStack {
