@@ -1,237 +1,632 @@
 # DevHub
 
-DevHub is a multi-repo developer workspace. It lets a user group GitHub repositories into a workspace, inspect the code in the browser, run supported projects inside BrowserPod, generate AI summaries of the codebase, and chat with AI at either the repo or workspace level.
+DevHub is a multi-repository developer workspace. A user can group GitHub repositories into a workspace, inspect source files in the browser, run compatible projects in BrowserPod, generate AI summaries of the codebase, review static and runtime security signals, and ask questions about a single repo or an entire workspace.
 
-This README covers the whole platform, not just the backend. The current repository contains the backend and Firebase config. The frontend is a separate sibling repo in the same hackathon project.
+This repository is the backend and Firebase configuration layer for the project. The frontend lives in a separate sibling repository in the same hackathon workspace, but this README documents the whole product so the backend behavior makes sense in context.
 
-## What The Project Does
+## Product Summary
 
-DevHub is built around a simple workflow:
+At a high level, DevHub does four things:
 
-1. Create a workspace.
-2. Add one or more GitHub repositories to that workspace.
-3. Clone and inspect repo files in BrowserPod.
-4. Send the repo source snapshot to the backend for AI extraction.
-5. Generate:
-   - tech stack detection
-   - high-level repo overview
-   - function and class summaries
-   - dependency inventory
-   - security findings
-   - AI README content
-   - runnability and runtime profile guidance
-6. Run supported repos in BrowserPod.
-7. Ask AI questions about one repo or the whole workspace.
-8. Delete repos or workspaces when they are no longer needed.
+1. It organizes related repositories into a workspace.
+2. It stores enough repo state to let the UI browse, analyze, and reason about code.
+3. It generates structured AI output from cached source files.
+4. It records security and runtime metadata so the frontend can make safer execution decisions.
 
-## Core Features
+The backend is the source of truth for:
+
+- workspace state
+- repo state
+- cached repo files used for AI extraction
+- AI extraction results and generated AI README content
+- saved repo and workspace chat history
+- runtime security events reported from BrowserPod or the frontend
+
+The frontend is responsible for:
+
+- UI and user interaction
+- BrowserPod boot, clone, file access, and command execution
+- collecting file trees and file contents for extraction
+- showing run options, repo views, security views, and chat
+
+## What The Project Does End To End
+
+The normal flow for a repo looks like this:
+
+1. A user creates a workspace.
+2. The user adds a GitHub repository URL to that workspace.
+3. The backend creates a repo record in Firestore with status `cloning`.
+4. The frontend clones the repo inside BrowserPod.
+5. The frontend reads a supported subset of files and sends them to the backend extraction endpoint.
+6. The backend stores those files in Firestore and starts asynchronous AI extraction.
+7. The backend produces:
+    - detected tech stack
+    - overview and purpose
+    - function and class summaries
+    - dependency inventory
+    - static security analysis
+    - runtime profile and runnability guidance
+    - AI README markdown
+8. The frontend fetches extraction state and renders the repo detail experience.
+9. If the repo is runnable, the frontend starts it inside BrowserPod and registers the portal URL with the backend.
+10. If the repo is only partially runnable, the frontend can present manual BrowserPod commands instead.
+11. Runtime security events can be posted back to the backend while the repo is running.
+12. Repo and workspace chat use saved extraction context plus previous chat history.
+
+## Main Product Features
 
 ### Workspace management
 
-- Create and list workspaces.
-- Delete a workspace and all of its cached data.
-- Track how many repos belong to each workspace.
-- Enforce a workspace cap of 3 workspaces in the current product flow.
+- Create workspaces with a name and description.
+- List all workspaces with repo counts.
+- Fetch one workspace with all repos included.
+- Delete a workspace and cascade-delete repo files, chat history, and runtime security events.
+- Enforce a current workspace cap of 3.
 
 ### Repository management
 
-- Add a GitHub repository to a workspace using a GitHub URL.
-- Fetch repository metadata and cached analysis state.
-- Delete a repo from a workspace without deleting the actual GitHub repository.
-- Remove related cached files, chat history, and runtime security events when a repo is deleted.
+- Add a repo to a workspace using a valid `https://github.com/{owner}/{repo}` URL.
+- Fetch a normalized repo record for the UI.
+- Delete repos globally or through a workspace-scoped endpoint.
+- Store run state such as `status`, `portalUrl`, `runnability`, and `runtimeSecurity`.
 
-### Code browsing
+### Source caching and code browsing support
 
-- Clone repo files into BrowserPod.
-- Build a file tree for the frontend.
-- Read supported source files directly in the browser.
-- Cache extracted repo files in Firestore so the backend can analyze them without recloning.
+- Accept file trees and file contents from the frontend.
+- Save extracted source files to Firestore with a source hash.
+- Serve cached file contents back to the frontend when BrowserPod is unavailable or when the frontend wants a persisted file read.
 
 ### AI extraction
 
-For each repo, the backend can analyze the stored source snapshot and return:
+The extraction pipeline can return:
 
-- detected language, framework, runtime, build tool, test framework, database, and other tools
-- a one-line summary and longer explanation of the repo
-- target users and repo purpose
-- documented functions, classes, and methods
-- dependency inventory
-- static security findings
-- generated AI README content
-- runnability result
-- runtime profile with automatic and manual command suggestions
+- `techStack`
+- `overview`
+- `functions`
+- `dependencies`
+- `security`
+- `runnability`
+- `aiReadme`
 
-The extraction flow is asynchronous and tracks progress so the frontend can show queued, scanning, querying, saving, readme, complete, or error states.
+The backend supports both AI-generated output and fallback extraction behavior when the AI provider is unavailable or partially fails.
 
-### AI chat
+### Chat
 
-DevHub supports two AI chat scopes:
-
-- repo chat: ask about one repository
-- workspace chat: ask questions across all repos in a workspace
-
-Chat history is persisted. If the model is unavailable, the backend falls back to a degraded reply built from saved extraction data instead of failing silently.
-
-### Secure runtime via BrowserPod
-
-DevHub does not run user repos directly on the host machine from the frontend flow.
-
-BrowserPod is the required runtime for executable repo actions in the frontend:
-
-- automatic preview runs
-- manual sandbox commands
-- repo file access during interactive exploration
-
-The frontend can:
-
-- boot a BrowserPod sandbox
-- clone repo files into the sandbox
-- infer runnability
-- run an automatic preview command when available
-- run manual sandbox commands for repos that are not preview apps
-- stop running sandboxes
-
-### Runtime profile and runnability
-
-The backend separates repo type from whether it can be auto-run. A repo may still be useful even if it is not automatically previewable.
-
-Runtime profiles classify repos as:
-
-- preview app
-- API server
-- library
-- CLI
-- test-only
-- unknown
-
-Support levels classify runtime behavior as:
-
-- auto-preview
-- manual-only
-- analysis-only
-
-This lets the frontend distinguish between:
-
-- repos that should open a live preview
-- repos that should offer safe manual commands in BrowserPod
-- repos that should only be analyzed
+- Repo-scoped chat for questions about one codebase.
+- Workspace-scoped chat for questions across several repos.
+- Duplicate question caching to avoid repeated responses for the same immediately repeated input.
+- Graceful degraded fallback replies when the AI provider is down or fails validation.
 
 ### Security analysis
 
-The project includes two layers of security support.
-
-Static security analysis:
+Static security analysis covers:
 
 - suspicious dependencies
-- risky lifecycle scripts
-- malware and supply-chain indicators
-- secrets and config findings
-- execution and network risks
+- malicious or suspicious package versions
+- risky npm lifecycle scripts
+- secrets and dangerous config patterns
+- execution, obfuscation, and supply-chain indicators
 
-Runtime security telemetry:
+Runtime security support covers:
 
-- BrowserPod and frontend-originated runtime events
-- event severity, category, phase, command, and evidence
-- aggregated runtime risk summary per repo
+- runtime event ingestion
+- event severity and categorization
+- risk summaries derived from runtime events
+- run gating for high-risk repositories
 
-High-risk repos can require explicit sandbox confirmation before the frontend is allowed to run them.
+### Runtime guidance
 
-## Architecture
+The backend distinguishes between:
 
-### Frontend
+- whether a repo looks like a frontend app, API server, library, CLI, test-only repo, or unknown repo
+- whether it should auto-preview in BrowserPod
+- whether it should only offer manual BrowserPod commands
+- whether it should only be analyzed and not run automatically
 
-The frontend is a React and Vite application written in TypeScript.
+This is important because a repo can be healthy and useful even if it should not expose a live preview.
 
-Main frontend responsibilities:
+## Backend Architecture
 
-- landing page and dashboard UI
-- workspace and repo navigation
-- BrowserPod lifecycle management
-- file tree and file viewer UI
-- run buttons, run inspection, and manual command UI
-- AI README, security, and extraction views
-- repo and workspace chat panels
-- optimistic workspace and repo state updates
+The backend is a TypeScript Express service with Firebase Admin for persistence.
 
-Important frontend technologies:
+### Stack
 
-- React 18
-- Vite
-- TypeScript
-- Tailwind CSS
-- Radix UI dialog/tabs primitives
-- BrowserPod SDK
-- Vitest and Testing Library
-
-### Backend
-
-The backend is an Express server written in TypeScript.
-
-Main backend responsibilities:
-
-- workspace and repo CRUD
-- repo file caching
-- AI extraction orchestration
-- OpenRouter calls for structured AI output
-- chat orchestration and fallback responses
-- security analysis and runtime security event ingestion
-- Firestore persistence
-
-Important backend technologies:
-
-- Node.js
+- Node.js 22
 - Express
 - TypeScript
 - Firebase Admin / Firestore
 - Zod
-- OpenRouter with DeepSeek models
-- Vitest and Supertest
+- OpenRouter
+- Vitest
+- Supertest
 
-### Persistence
+### Entry points
 
-Firestore stores the product state. Main collections are:
+- `server/src/index.ts`
+   - starts the HTTP server
+   - logs startup metadata
+   - installs process-level error logging
+- `server/src/app.ts`
+   - constructs the Express app
+   - sets CORS and JSON middleware
+   - mounts routes
+   - handles 404 and 500 responses
+- `server/src/config.ts`
+   - loads environment variables
+   - normalizes Firebase private key formatting
+   - parses OpenRouter settings and logging settings
+
+### Backend modules
+
+- `server/src/routes/workspaces.ts`
+   - workspace CRUD
+- `server/src/routes/repos.ts`
+   - repo CRUD, run state, cached file access, and runtime security endpoints
+- `server/src/routes/ai.ts`
+   - extraction start and extraction status fetch
+- `server/src/routes/chat.ts`
+   - repo and workspace chat
+- `server/src/ai/*`
+   - extraction logic, prompts, schemas, and OpenRouter integration
+- `server/src/lib/firebase.ts`
+   - Firestore helpers and collection ID mapping
+- `server/src/lib/repoFiles.ts`
+   - repo file persistence helpers
+- `server/src/lib/repoResponse.ts`
+   - API repo normalization for consistent `id` and `repoId`
+
+## Repository Layout
+
+```text
+Backend/
+├── README.md
+├── firebase.json
+├── firestore.rules
+├── firestore.indexes.json
+├── server/
+│   ├── .env.example
+│   ├── package.json
+│   ├── src/
+│   │   ├── ai/
+│   │   ├── app.ts
+│   │   ├── config.ts
+│   │   ├── index.ts
+│   │   ├── lib/
+│   │   ├── routes/
+│   │   └── types/
+│   └── tests/
+└── Research/
+```
+
+## Firestore Data Model
+
+The backend currently persists these main collections:
 
 - `workspaces`
+   - workspace metadata
 - `repos`
+   - repo metadata, extraction state, run state, AI README, and security summary
 - `repo_files`
+   - cached text files used for extraction and file fallback reads
 - `chat_messages`
+   - repo-scoped and workspace-scoped chat history
 - `repo_security_events`
+   - runtime events reported from BrowserPod and the frontend
 
-## API Overview
+### Workspace shape
+
+Stored fields include:
+
+- `workspaceId`
+- `name`
+- `description`
+- `createdAt`
+
+### Repo shape
+
+Important repo fields include:
+
+- `repoId`
+- `workspaceId`
+- `name`
+- `githubUrl`
+- `status`
+- `runnability`
+- `fileTree`
+- `analysis`
+- `analysisSourceHash`
+- `analysisStartedAt`
+- `analysisUpdatedAt`
+- `analysisModel`
+- `analysisError`
+- `analysisProgress`
+- `aiReadme`
+- `aiReadmeStatus`
+- `runtimeSecurity`
+- `portalUrl`
+- `createdAt`
+- `updatedAt`
+
+## API Reference
+
+All routes are served under `/api` except chat routes, which are mounted under `/api/chat`, and AI routes, which are mounted under `/api/ai`.
 
 ### Health
 
-- `GET /api/health`
+`GET /api/health`
+
+Returns a simple service heartbeat:
+
+```json
+{
+   "status": "ok",
+   "timestamp": "2026-05-03T12:00:00.000Z"
+}
+```
 
 ### Workspaces
 
-- `GET /api/workspaces`
-- `POST /api/workspaces`
-- `GET /api/workspaces/:id`
-- `DELETE /api/workspaces/:id`
+`GET /api/workspaces`
+
+- Returns all workspaces ordered by `createdAt`.
+- Includes `repoCount` for each workspace.
+
+`POST /api/workspaces`
+
+Request body:
+
+```json
+{
+   "name": "Security review",
+   "description": "Repos to analyze for BrowserPod compatibility"
+}
+```
+
+Behavior:
+
+- validates name and description
+- enforces the max workspace limit
+- creates a Firestore document
+
+`GET /api/workspaces/:id`
+
+- returns one workspace plus its repos
+- sorts repos by creation time
+
+`DELETE /api/workspaces/:id`
+
+- deletes the workspace
+- deletes repos in the workspace
+- deletes repo-scoped and workspace-scoped chat messages
+- deletes cached repo files and runtime security events
 
 ### Repositories
 
-- `POST /api/workspaces/:id/repos`
-- `GET /api/repos/:id`
-- `DELETE /api/repos/:id`
-- `DELETE /api/workspaces/:workspaceId/repos/:repoId`
-- `POST /api/repos/:id/run`
-- `POST /api/repos/:id/stop`
-- `GET /api/repos/:id/file`
-- runtime security event endpoints for repo runtime telemetry
+`POST /api/workspaces/:id/repos`
 
-### AI
+Request body:
 
-- `POST /api/ai/extract/:repoId`
-- `GET /api/ai/extract/:repoId`
+```json
+{
+   "githubUrl": "https://github.com/example/project"
+}
+```
+
+Behavior:
+
+- validates GitHub URL format
+- extracts repo name from URL
+- creates a repo record with status `cloning`
+
+`GET /api/repos/:id`
+
+- returns one repo record normalized for API use
+
+`DELETE /api/repos/:id`
+
+- deletes a repo and cascades related cached records
+
+`DELETE /api/workspaces/:workspaceId/repos/:repoId`
+
+- deletes a repo only if it belongs to the specified workspace
+- returns:
+
+```json
+{
+   "success": true,
+   "repoId": "repo-id",
+   "workspaceId": "workspace-id"
+}
+```
+
+`POST /api/repos/:id/run`
+
+Request body:
+
+```json
+{
+   "portalUrl": "https://...",
+   "sandboxConfirmed": true,
+   "manualOverride": false
+}
+```
+
+Behavior:
+
+- stores the BrowserPod portal URL
+- marks repo status as `running`
+- blocks the run if the repo is not automatically runnable and no manual override was requested
+- blocks the run if the repo is high risk and sandbox confirmation was not given
+
+`POST /api/repos/:id/stop`
+
+- clears the repo portal URL
+- marks repo status as `ready`
+
+`POST /api/repos/:id/security-events`
+
+Accepts runtime security telemetry from the frontend or BrowserPod adapters.
+
+Supported fields include:
+
+- `source`
+- `phase`
+- `category`
+- `severity`
+- `title`
+- `description`
+- `evidence`
+- `command`
+
+The endpoint stores the event, recalculates the runtime risk summary, updates the repo, and returns the saved event plus the new summary.
+
+`GET /api/repos/:id/security`
+
+- returns both static security findings and runtime security state
+- includes the raw runtime events array
+- includes `runnability`
+
+`GET /api/repos/:id/file?path=...`
+
+- returns cached file contents for a saved repo file
+- requires the file to have been saved previously during extraction collection
+
+### AI Extraction
+
+`POST /api/ai/extract/:repoId`
+
+This route starts or reuses extraction.
+
+Supported request shapes:
+
+1. Send explicit files:
+
+```json
+{
+   "fileTree": { "name": "repo", "path": "", "type": "directory", "children": [] },
+   "files": [
+      { "path": "package.json", "content": "{...}" },
+      { "path": "README.md", "content": "# Demo" }
+   ]
+}
+```
+
+2. Use already cached files:
+
+```json
+{
+   "useStoredFiles": true
+}
+```
+
+Behavior:
+
+- stores repo files and source hash
+- reuses in-flight extraction if one is already active
+- returns cached results if source hash did not change and analysis already exists
+- otherwise marks the repo as `analyzing` and starts background extraction
+
+`GET /api/ai/extract/:repoId`
+
+Returns the current extraction state and saved result fields, including:
+
+- `status`
+- `aiReadmeStatus`
+- `techStack`
+- `overview`
+- `functions`
+- `dependencies`
+- `security`
+- `aiReadme`
+- `runnability`
+- `analysisUpdatedAt`
+- `analysisModel`
+- `analysisError`
+- `analysisProgress`
 
 ### Chat
 
-- `POST /api/chat/repo/:repoId`
-- `GET /api/chat/repo/:repoId`
-- `POST /api/chat/workspace/:wsId`
-- `GET /api/chat/workspace/:wsId`
+`POST /api/chat/repo/:repoId`
+
+Request body:
+
+```json
+{
+   "message": "What does this project do?"
+}
+```
+
+Behavior:
+
+- loads recent repo chat history
+- builds a repo-scoped system prompt
+- asks OpenRouter for a structured JSON reply
+- persists both the user message and assistant reply
+- falls back to a degraded response when AI fails
+
+`GET /api/chat/repo/:repoId`
+
+- returns repo-scoped chat history ordered by timestamp
+
+`POST /api/chat/workspace/:wsId`
+
+- same behavior as repo chat, but includes all repos in the workspace as context
+
+`GET /api/chat/workspace/:wsId`
+
+- returns workspace-scoped chat history ordered by timestamp
+
+## Extraction And AI Behavior
+
+The extraction pipeline is designed to work even when some AI steps fail.
+
+### What the backend infers without a perfect README
+
+The backend does not rely only on `README.md`.
+
+It also inspects:
+
+- `package.json`
+- nested workspace package manifests
+- dependencies and devDependencies
+- scripts
+- file extensions
+- route definitions
+- code patterns indicating frontend apps, API servers, CLIs, or libraries
+- lockfiles and script contents for security signals
+
+README instructions are treated as useful supporting evidence, not the only source of truth.
+
+### Extraction progress phases
+
+The backend can report these phases:
+
+- `queued`
+- `scanning`
+- `querying`
+- `saving`
+- `readme`
+- `complete`
+- `error`
+
+### Timeout behavior
+
+- active extraction is deduplicated per repo
+- timed-out extraction jobs are marked as failed
+- the frontend can retry and start a fresh extraction
+
+## Runnability And Runtime Profiles
+
+The backend returns a `RunnabilityResult` that tells the frontend:
+
+- whether the repo can be auto-run
+- which command to use automatically
+- which manual BrowserPod commands are safe to suggest
+- which blockers explain why a repo should not auto-run
+
+### Project kinds
+
+- `preview-app`
+- `api-server`
+- `library`
+- `cli`
+- `test-only`
+- `unknown`
+
+### Support levels
+
+- `auto-preview`
+- `manual-only`
+- `analysis-only`
+
+### Current product rule
+
+BrowserPod is the only execution path the frontend should use. The backend records and explains run state, but it does not execute repository code on the host machine.
+
+## Security Model
+
+### Static analysis
+
+The extraction layer scans for:
+
+- vulnerable or suspicious package versions
+- risky lifecycle scripts like `postinstall`
+- malware or obfuscation signals
+- secret exposure patterns
+- execution and network abuse signals
+- configuration mistakes
+
+### Runtime analysis
+
+The backend can accept runtime events while the repo is executing in BrowserPod.
+
+Runtime events are categorized by:
+
+- source
+- phase
+- category
+- severity
+- title
+- description
+- evidence
+- command
+
+This allows the UI to show both static and runtime risk together.
+
+### Run gating
+
+The backend can reject a run request if:
+
+- the repo is not automatically runnable and there is no manual override
+- the repo has high or critical security findings and sandbox confirmation was not given
+
+## Environment Variables
+
+Use `server/.env.example` as the starting point.
+
+Required or important variables:
+
+- `PORT`
+   - backend HTTP port
+- `CORS_ORIGIN`
+   - frontend origin allowed by CORS
+- `OPENROUTER_API_KEY`
+   - required for AI-backed extraction and chat
+- `OPENROUTER_MODEL`
+   - primary DeepSeek model name
+- `OPENROUTER_FALLBACK_MODELS`
+   - comma-separated fallback models
+- `OPENROUTER_RETRY_COUNT`
+   - retry count for provider calls
+- `OPENROUTER_TIMEOUT_MS`
+   - per-request timeout
+- `OPENROUTER_MAX_TOKENS`
+   - structured response token cap
+- `OPENROUTER_STRICT_JSON_SCHEMA`
+   - whether strict provider JSON schema mode is enabled
+- `OPENROUTER_APP_NAME`
+   - application name sent to the provider
+- `OPENROUTER_SITE_URL`
+   - optional site URL metadata
+- `FIREBASE_PROJECT_ID`
+   - Firebase project ID
+- `FIREBASE_PRIVATE_KEY`
+   - Firebase admin private key
+- `FIREBASE_CLIENT_EMAIL`
+   - Firebase service account email
+- `LOG_LEVEL`
+   - log verbosity
+
+### Firebase private key note
+
+The backend normalizes the Firebase private key by:
+
+- stripping surrounding quotes
+- converting literal `\n` into real newlines
+- normalizing Windows line endings
+- trimming surrounding whitespace
+
+This makes Render-style and copy-pasted secret formats more reliable.
 
 ## Local Development
 
@@ -239,50 +634,37 @@ Firestore stores the product state. Main collections are:
 
 - Node.js 22
 - npm
-- Firebase project with Firestore enabled
-- OpenRouter API key for AI features
-- BrowserPod API key for browser sandbox features in the frontend
+- a Firebase project with Firestore enabled
+- a Firebase service account for admin access
+- an OpenRouter API key for AI features
+- a BrowserPod API key for the frontend repo
 
-### Backend setup
-
-From the backend server directory:
+### Install backend dependencies
 
 ```bash
 cd server
 npm install
 ```
 
-Create `server/.env` with these values:
+### Create backend environment file
 
-```env
-PORT=3001
-CORS_ORIGIN=http://localhost:5173
+Copy the example file and fill in real values:
 
-FIREBASE_PROJECT_ID=your-project-id
-FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
-FIREBASE_CLIENT_EMAIL=your-service-account-email
-
-OPENROUTER_API_KEY=your-openrouter-key
-OPENROUTER_MODEL=deepseek/deepseek-v4-flash
-OPENROUTER_FALLBACK_MODELS=deepseek/deepseek-chat-v3-0324
-OPENROUTER_MAX_TOKENS=4096
-OPENROUTER_RETRY_COUNT=0
-OPENROUTER_TIMEOUT_MS=45000
-OPENROUTER_STRICT_JSON_SCHEMA=true
-OPENROUTER_APP_NAME=DevHub
-OPENROUTER_SITE_URL=
-
-LOG_LEVEL=info
+```bash
+cd server
+cp .env.example .env
 ```
 
-Run the backend:
+### Run the backend in development
 
 ```bash
 cd server
 npm run dev
 ```
 
-Useful backend commands:
+The API will start on `http://localhost:3001` by default.
+
+### Build and test
 
 ```bash
 cd server
@@ -291,42 +673,87 @@ npm run build
 npm run smoke
 ```
 
-### Frontend setup
+### Frontend environment
 
-In the frontend repo, install dependencies and provide the environment values the client expects:
+In the frontend repo, the client typically needs:
 
 ```env
 VITE_API_URL=http://localhost:3001/api
 VITE_BP_APIKEY=your-browserpod-api-key
 ```
 
-Then run:
+## Example Backend Startup Checklist
+
+1. Install backend dependencies.
+2. Create `server/.env` from `server/.env.example`.
+3. Make sure Firebase credentials are valid.
+4. Make sure OpenRouter credentials are valid if you want AI features.
+5. Start the backend with `npm run dev`.
+6. Start the frontend separately in its own repository.
+7. Open the frontend and verify `GET /api/health` succeeds.
+
+## Development Workflow Notes
+
+- The backend is tested with Vitest and Supertest.
+- Firestore access is wrapped through helper functions so route logic stays simple.
+- Repo deletion and workspace deletion are designed to clean up dependent records.
+- Extraction is asynchronous and deduplicated to reduce repeated provider calls.
+- Chat replies are schema-constrained JSON responses, then persisted as normal text messages.
+
+## Operational Notes And Limitations
+
+- BrowserPod is a frontend runtime concern. The backend records repo run state and security data, but does not boot the runtime itself.
+- The backend can analyze cached files even when a repo cannot be run successfully.
+- A repo can be useful while still being `manual-only` or `analysis-only`.
+- Workspace count is intentionally capped right now.
+- Extraction depends on cached text files, so very large repos or unsupported binary-heavy repos will only be partially represented.
+- Runtime security insight depends on the frontend actually reporting BrowserPod events.
+
+## Troubleshooting
+
+### `npm run dev` fails in the wrong directory
+
+The backend scripts live under `server/`, not the repo root.
+
+Use:
 
 ```bash
-npm install
+cd server
 npm run dev
 ```
 
-Useful frontend commands:
+### Firebase credentials error
 
-```bash
-npm test
-npm run build
-npm run lint
-```
+Check:
 
-## How The Pieces Work Together
+- `FIREBASE_PROJECT_ID`
+- `FIREBASE_PRIVATE_KEY`
+- `FIREBASE_CLIENT_EMAIL`
 
-1. The frontend creates a workspace through the backend.
-2. A repo is added to that workspace from a GitHub URL.
-3. BrowserPod clones the repo and exposes files to the frontend.
-4. The frontend sends files and file tree data to the backend extraction endpoint.
-5. The backend stores files, runs structured AI extraction, and saves the results.
-6. The frontend loads extraction data and renders overview, functions, AI README, security, and runtime guidance.
-7. If the repo can run, the frontend starts it in BrowserPod and registers the portal URL with the backend.
-8. If the repo is manual-only, the frontend offers safe BrowserPod command suggestions instead.
-9. Repo and workspace chat use the saved analysis context and message history.
-10. Delete actions clean up cached backend data while leaving the source GitHub repo untouched.
+If the private key came from a hosting dashboard, make sure escaped newlines were preserved correctly.
+
+### AI extraction fails
+
+Check:
+
+- `OPENROUTER_API_KEY`
+- model name
+- timeout and retry settings
+- whether repo files were actually cached before calling `useStoredFiles`
+
+### Chat returns degraded responses
+
+This usually means:
+
+- the OpenRouter call failed
+- the model response failed schema validation
+- the provider was temporarily unavailable
+
+The backend still returns a fallback response using saved extraction data when possible.
+
+### Cached file fetch returns 404
+
+`GET /api/repos/:id/file` only works for files already saved in `repo_files`. If the frontend has not uploaded files for extraction yet, there may be no cached content to serve.
 
 ## Current Product Rules
 
@@ -338,17 +765,16 @@ npm run lint
 
 ## Project Status
 
-The backend and frontend both have automated test coverage and build validation. Recent work included:
+Recent backend work included:
 
-- runtime security telemetry
+- runtime security telemetry support
 - runtime profile inference
+- monorepo workspace-script runnability detection
 - workspace-scoped repository deletion
-- BrowserPod-only execution rules in the frontend
+- improved README and backend documentation
 
-If you want, the next step can be splitting this into:
+If this repository grows further, the next sensible documentation split would be:
 
-1. a short landing-page style root README
-2. a backend-only README
-3. a frontend-only README
-
-That usually reads better once the project grows.
+1. a short root product overview
+2. a backend-only operations README inside `server/`
+3. a frontend-only README in the frontend repository
