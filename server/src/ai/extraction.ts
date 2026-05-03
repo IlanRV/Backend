@@ -72,6 +72,7 @@ interface PackageMetadata {
 }
 
 const sourceExtensions = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.py']);
+const templateExtensions = new Set(['.ejs', '.hbs', '.handlebars', '.dust', '.html']);
 const nativeDependencyBlocklist = [
   'bcrypt',
   'better-sqlite3',
@@ -462,6 +463,15 @@ function hasFile(files: ExtractionFile[], pattern: RegExp): boolean {
 
 function hasContent(files: ExtractionFile[], pattern: RegExp): boolean {
   return files.some((file) => routeScanExtensions.has(extensionOf(file.path)) && pattern.test(file.content));
+}
+
+function isSecuritySourceCandidate(file: ExtractionFile): boolean {
+  if (file.path.includes('node_modules/')) {
+    return false;
+  }
+
+  const extension = extensionOf(file.path);
+  return sourceExtensions.has(extension) || templateExtensions.has(extension);
 }
 
 function previewScriptName(scripts: Record<string, string>): string | null {
@@ -1078,12 +1088,52 @@ function buildFallbackSecurityScan(files: ExtractionFile[], packageMetadata: Pac
       recommendation: 'Replace dynamic execution with explicit parsing or dispatch logic, or prove the input is trusted.',
     },
     {
-      pattern: /\b(child_process|execSync|exec\s*\(|spawn\s*\(|subprocess|os\.system)\b/,
+      pattern: /\bchild_process\b|\brequire\(['"]child_process['"]\)|\bexecSync\s*\(|(?:^|[^\w$.])exec\s*\(|(?:^|[^\w$.])spawn\s*\(|\bsubprocess\b|\bos\.system\b/,
       title: 'Shell or process execution path detected',
       severity: 'medium',
       category: 'execution',
       impact: 'Process execution can become command injection or persistence if arguments include untrusted input.',
       recommendation: 'Validate arguments, avoid shell mode, and restrict commands to known-safe values.',
+    },
+    {
+      pattern: /\b(?:find|findOne|findOneAndUpdate|updateOne|updateMany)\s*\([\s\S]{0,220}req\.body/,
+      title: 'Possible NoSQL injection',
+      severity: 'high',
+      category: 'execution',
+      impact: 'Passing request body values directly into database queries can allow query-operator injection such as $gt or $ne.',
+      recommendation: 'Validate and coerce request fields to primitive values before building MongoDB/Mongoose queries.',
+    },
+    {
+      pattern: /res\.redirect\s*\([\s\S]{0,140}(?:req\.(?:body|query|params)|redirectPage|returnTo|nextUrl)/,
+      title: 'Possible open redirect',
+      severity: 'medium',
+      category: 'network',
+      impact: 'User-controlled redirects can send users to attacker-controlled sites and aid phishing.',
+      recommendation: 'Allow only relative paths or validate redirects against a strict allowlist.',
+    },
+    {
+      pattern: /res\.render\s*\([\s\S]{0,180}req\.(?:body|query|params)/,
+      title: 'Untrusted template render context',
+      severity: 'high',
+      category: 'execution',
+      impact: 'Passing untrusted request objects directly into templates can expose path traversal, local file inclusion, or template injection paths.',
+      recommendation: 'Pass an explicit allowlisted view model to templates instead of raw request data.',
+    },
+    {
+      pattern: /session\s*\(\s*\{[\s\S]{0,360}\bsecret\s*:\s*['"][^'"]+['"]/,
+      title: 'Hardcoded session secret',
+      severity: 'high',
+      category: 'secret',
+      impact: 'Hardcoded session secrets can allow cookie forgery if the source code or package is exposed.',
+      recommendation: 'Load session secrets from environment-backed secret storage and rotate exposed values.',
+    },
+    {
+      pattern: /<%-[\s\S]{0,160}%>/,
+      title: 'Raw template output detected',
+      severity: 'medium',
+      category: 'execution',
+      impact: 'Raw template output can create XSS when the rendered value is user-controlled.',
+      recommendation: 'Use escaped template output by default and sanitize any intentional HTML.',
     },
     {
       pattern: /\b(Buffer\.from|atob|fromCharCode|base64)\b[\s\S]{0,240}\b(eval|Function\s*\(|exec\s*\()\b/,
@@ -1104,7 +1154,7 @@ function buildFallbackSecurityScan(files: ExtractionFile[], packageMetadata: Pac
   ];
 
   for (const file of files) {
-    if (file.path.includes('node_modules/')) {
+    if (!isSecuritySourceCandidate(file)) {
       continue;
     }
 
