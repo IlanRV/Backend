@@ -23,6 +23,7 @@ export interface Repo {
   analysisProgress?: AnalysisProgress | null;
   aiReadme: string | null;
   aiReadmeStatus?: 'pending' | 'ready' | 'error' | null;
+  runtimeSecurity?: RuntimeSecuritySummary | null;
   runnable?: boolean;
   runScript?: string | null;
   portalUrl: string | null;
@@ -54,9 +55,53 @@ export interface RepoFile {
 export interface RunnabilityResult {
   canRun: boolean;
   entryPoint: string | null;
+  autoCommand?: string | null;
+  manualCommands?: RuntimeCommandSuggestion[];
+  runtimeProfile?: RepoRuntimeProfile;
   blockers: string[];
+  blockerDetails?: RunnabilityBlocker[];
   previewPath?: string;
   previewPaths?: string[];
+}
+
+export type RepoProjectKind = 'preview-app' | 'api-server' | 'library' | 'cli' | 'test-only' | 'unknown';
+export type RepoRuntimeSupportLevel = 'auto-preview' | 'manual-only' | 'analysis-only';
+export type RuntimeCommandConfidence = 'high' | 'medium' | 'low';
+
+export interface RuntimeCommandSuggestion {
+  command: string;
+  label: string;
+  reason: string;
+  confidence: RuntimeCommandConfidence;
+}
+
+export interface RepoRuntimeProfile {
+  projectKind: RepoProjectKind;
+  supportLevel: RepoRuntimeSupportLevel;
+  previewExpected: boolean;
+  autoCommand: string | null;
+  manualCommands: RuntimeCommandSuggestion[];
+  evidence: string[];
+  reasoning: string;
+}
+
+export type RunnabilityBlockerCode =
+  | 'missing-package-json'
+  | 'missing-run-script'
+  | 'unsupported-native-dependency'
+  | 'not-preview-app'
+  | 'manual-only-repo'
+  | 'analysis-only-repo';
+
+export type RunnabilityBlockerSeverity = 'info' | 'warning' | 'error';
+
+export interface RunnabilityBlocker {
+  code: RunnabilityBlockerCode;
+  severity: RunnabilityBlockerSeverity;
+  title: string;
+  description: string;
+  recommendation: string;
+  evidence?: string;
 }
 
 export type AnalysisProgressPhase = 'queued' | 'scanning' | 'querying' | 'saving' | 'readme' | 'complete' | 'error';
@@ -119,6 +164,38 @@ export interface SecurityScan {
   dependencyRisks: SecurityDependencyRisk[];
   scannedFiles: string[];
   notes: string[];
+}
+
+export type RuntimeSecurityEventSource = 'browserpod' | 'frontend';
+export type RuntimeSecurityPhase = 'clone' | 'install' | 'start' | 'preview' | 'stop' | 'runtime';
+export type RuntimeSecurityCategory =
+  | 'filesystem'
+  | 'network'
+  | 'process'
+  | 'resource'
+  | 'install'
+  | 'sandbox'
+  | 'runtime'
+  | 'other';
+
+export interface RuntimeSecurityEvent {
+  eventId: string;
+  repoId: string;
+  source: RuntimeSecurityEventSource;
+  phase: RuntimeSecurityPhase;
+  category: RuntimeSecurityCategory;
+  severity: SecuritySeverity;
+  title: string;
+  description: string;
+  evidence?: string;
+  command?: string;
+  createdAt: string;
+}
+
+export interface RuntimeSecuritySummary {
+  riskLevel: SecuritySeverity | 'unknown';
+  eventCount: number;
+  latestEventAt: string | null;
 }
 
 export interface TechStack {

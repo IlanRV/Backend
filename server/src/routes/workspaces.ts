@@ -145,6 +145,7 @@ router.delete(
               .where('scopeId', '==', document.id)
           ),
           deleteDocsByQuery(getCollection('repo_files').where('repoId', '==', document.id)),
+          deleteDocsByQuery(getCollection('repo_security_events').where('repoId', '==', document.id)),
         ])
       )
     );

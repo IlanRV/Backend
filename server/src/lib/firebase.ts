@@ -9,6 +9,7 @@ const idFieldsByCollection: Record<string, string> = {
   workspaces: 'workspaceId',
   repos: 'repoId',
   repo_files: 'repoFileId',
+  repo_security_events: 'eventId',
   chat_messages: 'messageId',
 };
 

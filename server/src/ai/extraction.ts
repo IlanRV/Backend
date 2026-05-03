@@ -6,8 +6,13 @@ import type {
   ExtractionResult,
   FunctionDoc,
   Overview,
+  RepoRuntimeProfile,
+  RepoProjectKind,
+  RunnabilityBlocker,
   Repo,
   RunnabilityResult,
+  RuntimeCommandConfidence,
+  RuntimeCommandSuggestion,
   SecurityConfidence,
   SecurityFinding,
   SecurityScan,
@@ -52,6 +57,11 @@ interface PackageMetadata {
   hasPackageJson: boolean;
   name?: string;
   description?: string;
+  main?: string;
+  module?: string;
+  types?: string;
+  hasExports: boolean;
+  bin: Record<string, string>;
   scripts: Record<string, string>;
   dependencies: Record<string, string>;
   devDependencies: Record<string, string>;
@@ -75,6 +85,21 @@ const nativeDependencyBlocklist = [
 ];
 const runScriptPriority = ['dev', 'start', 'serve'] as const;
 const routeScanExtensions = new Set(['.js', '.jsx', '.ts', '.tsx']);
+const frontendDependencyNames = [
+  'vite',
+  'react',
+  'react-dom',
+  'next',
+  'nuxt',
+  'vue',
+  '@vue/cli-service',
+  'svelte',
+  '@sveltejs/kit',
+  '@vitejs/plugin-react',
+];
+const apiDependencyNames = ['express', 'fastify', '@nestjs/core', 'koa', 'hono'];
+const cliDependencyNames = ['commander', 'yargs', 'cac', 'meow', 'clipanion'];
+const directNodeEntries = ['server.js', 'src/server.js', 'index.js', 'src/index.js'];
 const logger = createLogger('ai-extraction');
 const securitySeverityRank: Record<SecuritySeverity | 'unknown', number> = {
   critical: 5,
@@ -95,6 +120,81 @@ const suspiciousDependencyNames = new Set([
   'crypto-miner',
   'xmrig',
 ]);
+const knownBadPackageVersions: Record<string, Record<string, {
+  severity: SecuritySeverity;
+  risk: string;
+  reason: string;
+}>> = {
+  'ua-parser-js': {
+    '0.7.29': {
+      severity: 'high',
+      risk: 'Known compromised npm release',
+      reason: 'ua-parser-js 0.7.29 was one of the compromised npm releases that shipped credential-stealing and crypto-mining malware.',
+    },
+    '0.8.0': {
+      severity: 'high',
+      risk: 'Known compromised npm release',
+      reason: 'ua-parser-js 0.8.0 was one of the compromised npm releases that shipped credential-stealing and crypto-mining malware.',
+    },
+    '1.0.0': {
+      severity: 'high',
+      risk: 'Known compromised npm release',
+      reason: 'ua-parser-js 1.0.0 was one of the compromised npm releases that shipped credential-stealing and crypto-mining malware.',
+    },
+  },
+  'flatmap-stream': {
+    '0.1.1': {
+      severity: 'high',
+      risk: 'Known malicious npm release',
+      reason: 'flatmap-stream 0.1.1 contained the event-stream wallet-stealing payload.',
+    },
+  },
+  'event-stream': {
+    '3.3.6': {
+      severity: 'medium',
+      risk: 'Associated with compromised dependency chain',
+      reason: 'event-stream 3.3.6 depended on the malicious flatmap-stream release in the historical supply-chain attack.',
+    },
+  },
+  colors: {
+    '1.4.1': {
+      severity: 'medium',
+      risk: 'Known sabotaged npm release',
+      reason: 'colors 1.4.1 is associated with the intentional infinite-loop sabotage incident.',
+    },
+  },
+  faker: {
+    '6.6.6': {
+      severity: 'medium',
+      risk: 'Known sabotaged npm release',
+      reason: 'faker 6.6.6 is associated with the intentional infinite-loop sabotage incident.',
+    },
+  },
+  rc: {
+    '1.2.8': {
+      severity: 'medium',
+      risk: 'Historically compromised package version',
+      reason: 'rc 1.2.8 has been associated with a compromised maintainer publish and should be verified before execution.',
+    },
+  },
+  coa: {
+    '2.0.3': {
+      severity: 'medium',
+      risk: 'Historically compromised package version',
+      reason: 'coa 2.0.3 was part of the compromised npm account incident and should be verified before execution.',
+    },
+    '2.0.4': {
+      severity: 'medium',
+      risk: 'Historically compromised package version',
+      reason: 'coa 2.0.4 was part of the compromised npm account incident and should be verified before execution.',
+    },
+    '2.1.1': {
+      severity: 'medium',
+      risk: 'Historically compromised package version',
+      reason: 'coa 2.1.1 was part of the compromised npm account incident and should be verified before execution.',
+    },
+  },
+};
 const configFileMatchers = [
   'tsconfig.json',
   '.eslintrc',
@@ -150,6 +250,8 @@ function getPackageMetadata(files: ExtractionFile[]): PackageMetadata {
   if (!packageFile) {
     return {
       hasPackageJson: false,
+      hasExports: false,
+      bin: {},
       scripts: {},
       dependencies: {},
       devDependencies: {},
@@ -158,14 +260,23 @@ function getPackageMetadata(files: ExtractionFile[]): PackageMetadata {
   }
 
   const parsed = parseJsonObject(packageFile.content);
+  const name = typeof parsed.name === 'string' ? parsed.name : undefined;
   const engines = isRecord(parsed.engines)
     ? { node: typeof parsed.engines.node === 'string' ? parsed.engines.node : undefined }
     : {};
+  const bin = typeof parsed.bin === 'string' && name
+    ? { [name]: parsed.bin }
+    : readStringRecord(parsed.bin);
 
   return {
     hasPackageJson: Object.keys(parsed).length > 0,
-    name: typeof parsed.name === 'string' ? parsed.name : undefined,
+    name,
     description: typeof parsed.description === 'string' ? parsed.description : undefined,
+    main: typeof parsed.main === 'string' ? parsed.main : undefined,
+    module: typeof parsed.module === 'string' ? parsed.module : undefined,
+    types: typeof parsed.types === 'string' ? parsed.types : undefined,
+    hasExports: parsed.exports !== undefined,
+    bin,
     scripts: readStringRecord(parsed.scripts),
     dependencies: readStringRecord(parsed.dependencies),
     devDependencies: readStringRecord(parsed.devDependencies),
@@ -336,27 +447,321 @@ function choosePreviewPath(paths: string[]): string | undefined {
   );
 }
 
+function allDependencies(packageMetadata: PackageMetadata): Record<string, string> {
+  return { ...packageMetadata.dependencies, ...packageMetadata.devDependencies };
+}
+
+function hasAnyDependency(packageMetadata: PackageMetadata, names: string[]): boolean {
+  return hasDependency(allDependencies(packageMetadata), names);
+}
+
+function hasFile(files: ExtractionFile[], pattern: RegExp): boolean {
+  return files.some((file) => pattern.test(file.path));
+}
+
+function hasContent(files: ExtractionFile[], pattern: RegExp): boolean {
+  return files.some((file) => routeScanExtensions.has(extensionOf(file.path)) && pattern.test(file.content));
+}
+
+function previewScriptName(scripts: Record<string, string>): string | null {
+  return runScriptPriority.find((scriptName) => Boolean(scripts[scriptName])) || null;
+}
+
+function npmRunCommand(scriptName: string): string {
+  return `npm run ${scriptName}`;
+}
+
+function isFrontendProject(packageMetadata: PackageMetadata, files: ExtractionFile[]): boolean {
+  return (
+    hasAnyDependency(packageMetadata, frontendDependencyNames) ||
+    hasFile(files, /(^|\/)(index\.html|vite\.config\.[mc]?[jt]s|next\.config\.[mc]?[jt]s|nuxt\.config\.[jt]s|svelte\.config\.[jt]s)$/i) ||
+    hasFile(files, /(^|\/)(src\/main\.[jt]sx?|src\/App\.[jt]sx?|pages\/.*\.[jt]sx?|app\/.*\.[jt]sx?)$/i) ||
+    hasContent(files, /from\s+['"](?:react|vue|svelte|next\/)/)
+  );
+}
+
+function isApiServerProject(packageMetadata: PackageMetadata, files: ExtractionFile[]): boolean {
+  return (
+    hasAnyDependency(packageMetadata, apiDependencyNames) ||
+    hasContent(files, /\b(require\(['"]express['"]\)|from\s+['"]express['"]|fastify\(|new\s+Koa\(|new\s+Hono\()/) ||
+    hasContent(files, /\bapp\s*\.\s*listen\s*\(|\bserver\s*\.\s*listen\s*\(/) ||
+    detectPreviewPaths(files).length > 0
+  );
+}
+
+function isCliProject(packageMetadata: PackageMetadata, files: ExtractionFile[]): boolean {
+  return (
+    Object.keys(packageMetadata.bin).length > 0 ||
+    hasAnyDependency(packageMetadata, cliDependencyNames) ||
+    hasFile(files, /(^|\/)(bin\/|cli\.[mc]?[jt]s$)/i) ||
+    hasContent(files, /\b(Command|program)\s*\(|\byargs\s*\(|\bcac\s*\(/)
+  );
+}
+
+function isLibraryProject(packageMetadata: PackageMetadata, files: ExtractionFile[]): boolean {
+  const hasEntryMetadata = Boolean(packageMetadata.name && (packageMetadata.main || packageMetadata.module || packageMetadata.types || packageMetadata.hasExports));
+  const hasBuildAndTest = Boolean(packageMetadata.scripts.build && packageMetadata.scripts.test);
+  const sourceCount = files.filter((file) => sourceExtensions.has(extensionOf(file.path))).length;
+
+  return hasEntryMetadata || (Boolean(packageMetadata.name) && sourceCount >= 2 && hasBuildAndTest);
+}
+
+function isTestOnlyProject(packageMetadata: PackageMetadata): boolean {
+  const scriptNames = Object.keys(packageMetadata.scripts);
+
+  if (!scriptNames.length) {
+    return false;
+  }
+
+  return scriptNames.every((scriptName) => /^(pretest|test|posttest|lint|coverage|prepare|build)$/i.test(scriptName));
+}
+
+function addManualCommand(
+  commands: RuntimeCommandSuggestion[],
+  command: string,
+  label: string,
+  reason: string,
+  confidence: RuntimeCommandConfidence
+): void {
+  if (commands.some((item) => item.command === command)) {
+    return;
+  }
+
+  commands.push({ command, label, reason, confidence });
+}
+
+function obviousNodeEntry(files: ExtractionFile[]): string | null {
+  const filePaths = new Set(files.map((file) => file.path));
+  return directNodeEntries.find((entry) => filePaths.has(entry)) || null;
+}
+
+function buildManualCommands(packageMetadata: PackageMetadata, files: ExtractionFile[]): RuntimeCommandSuggestion[] {
+  const commands: RuntimeCommandSuggestion[] = [];
+
+  if (packageMetadata.scripts.test) {
+    addManualCommand(commands, 'npm test', 'Run tests', 'The package.json test script can validate the project without opening a preview.', 'high');
+  }
+  if (packageMetadata.scripts.lint) {
+    addManualCommand(commands, 'npm run lint', 'Run lint', 'The lint script is available as a safe manual validation command.', 'high');
+  }
+  if (packageMetadata.scripts.coverage) {
+    addManualCommand(commands, 'npm run coverage', 'Run coverage', 'The coverage script can validate test behavior without a preview.', 'medium');
+  }
+
+  const firstBin = Object.entries(packageMetadata.bin)[0];
+  if (firstBin) {
+    const [, binPath] = firstBin;
+    addManualCommand(commands, `node ${binPath} --help`, 'Show CLI help', 'The package exposes a bin entry, so help output is the safest manual check.', 'medium');
+  }
+
+  const entry = obviousNodeEntry(files);
+  if (entry) {
+    addManualCommand(commands, `node ${entry}`, 'Run direct Node entry', 'A common Node entry file exists, but it was not promoted to auto-preview without stronger app/server evidence.', 'low');
+  }
+
+  return commands;
+}
+
+function runtimeReason(kind: RepoProjectKind, evidence: string[]): string {
+  if (kind === 'preview-app') {
+    return 'Frontend app indicators and a preview script were found.';
+  }
+  if (kind === 'api-server') {
+    return 'Server framework indicators and a startable script were found.';
+  }
+  if (kind === 'library') {
+    return 'Package entry metadata points to a library package rather than a live preview app.';
+  }
+  if (kind === 'cli') {
+    return 'CLI entry metadata was found, so manual commands are safer than a BrowserPod preview.';
+  }
+  if (kind === 'test-only') {
+    return 'Only validation-oriented scripts were found, with no app or server preview evidence.';
+  }
+
+  return evidence.length ? 'Runtime evidence was weak or conflicting.' : 'No reliable runtime evidence was found.';
+}
+
+function buildRuntimeProfile(packageMetadata: PackageMetadata, files: ExtractionFile[]): RepoRuntimeProfile {
+  const manualCommands = buildManualCommands(packageMetadata, files);
+  const scriptName = previewScriptName(packageMetadata.scripts);
+  const autoCommand = scriptName ? npmRunCommand(scriptName) : null;
+  const frontend = isFrontendProject(packageMetadata, files);
+  const apiServer = isApiServerProject(packageMetadata, files);
+  const cli = isCliProject(packageMetadata, files);
+  const library = !frontend && !apiServer && !cli && isLibraryProject(packageMetadata, files);
+  const testOnly = isTestOnlyProject(packageMetadata) && !frontend && !apiServer && !cli && !library;
+  const evidence = [
+    packageMetadata.name ? `package: ${packageMetadata.name}` : '',
+    scriptName ? `preview script: ${scriptName}` : '',
+    frontend ? 'frontend framework or file indicators' : '',
+    apiServer ? 'HTTP server or route indicators' : '',
+    cli ? 'CLI bin or parser indicators' : '',
+    library ? 'library entry metadata' : '',
+    testOnly ? 'test/lint/coverage scripts only' : '',
+  ].filter(Boolean);
+
+  if (!packageMetadata.hasPackageJson) {
+    return {
+      projectKind: 'unknown',
+      supportLevel: 'analysis-only',
+      previewExpected: false,
+      autoCommand: null,
+      manualCommands,
+      evidence,
+      reasoning: runtimeReason('unknown', evidence),
+    };
+  }
+
+  if (frontend && autoCommand) {
+    return {
+      projectKind: 'preview-app',
+      supportLevel: 'auto-preview',
+      previewExpected: true,
+      autoCommand,
+      manualCommands,
+      evidence,
+      reasoning: runtimeReason('preview-app', evidence),
+    };
+  }
+
+  if (apiServer && autoCommand) {
+    return {
+      projectKind: 'api-server',
+      supportLevel: 'auto-preview',
+      previewExpected: true,
+      autoCommand,
+      manualCommands,
+      evidence,
+      reasoning: runtimeReason('api-server', evidence),
+    };
+  }
+
+  if (cli) {
+    return {
+      projectKind: 'cli',
+      supportLevel: 'manual-only',
+      previewExpected: false,
+      autoCommand: null,
+      manualCommands,
+      evidence,
+      reasoning: runtimeReason('cli', evidence),
+    };
+  }
+
+  if (testOnly) {
+    return {
+      projectKind: 'test-only',
+      supportLevel: 'manual-only',
+      previewExpected: false,
+      autoCommand: null,
+      manualCommands,
+      evidence,
+      reasoning: runtimeReason('test-only', evidence),
+    };
+  }
+
+  if (library) {
+    return {
+      projectKind: 'library',
+      supportLevel: 'analysis-only',
+      previewExpected: false,
+      autoCommand: null,
+      manualCommands,
+      evidence,
+      reasoning: runtimeReason('library', evidence),
+    };
+  }
+
+  return {
+    projectKind: 'unknown',
+    supportLevel: 'analysis-only',
+    previewExpected: false,
+    autoCommand: null,
+    manualCommands,
+    evidence,
+    reasoning: runtimeReason('unknown', evidence),
+  };
+}
+
 function buildRunnability(packageMetadata: PackageMetadata, files: ExtractionFile[]): RunnabilityResult {
   const blockers: string[] = [];
+  const blockerDetails: RunnabilityBlocker[] = [];
   const entryPoint = runScriptPriority.find((scriptName) => Boolean(packageMetadata.scripts[scriptName])) || null;
+  const runtimeProfile = buildRuntimeProfile(packageMetadata, files);
   const dependencies = { ...packageMetadata.dependencies, ...packageMetadata.devDependencies };
   const blockedDependencies = nativeDependencyBlocklist.filter((dependency) => Boolean(dependencies[dependency]));
   const previewPaths = detectPreviewPaths(files);
 
   if (!packageMetadata.hasPackageJson) {
     blockers.push('No readable package.json found at repo root');
+    blockerDetails.push({
+      code: 'missing-package-json',
+      severity: 'error',
+      title: 'No package.json found',
+      description:
+        'DevHub could not find a readable package.json at the repository root, so it cannot infer install dependencies or npm run commands for BrowserPod.',
+      recommendation:
+        'Add a package.json at the project root, or send cached source files with a clear run command so DevHub can classify the project.',
+    });
   }
-  if (!entryPoint) {
+  if (!entryPoint && (runtimeProfile.projectKind === 'unknown' || runtimeProfile.previewExpected)) {
     blockers.push('No runnable npm script found: expected "dev", "start", or "serve"');
+    const availableScripts = Object.keys(packageMetadata.scripts);
+    blockerDetails.push({
+      code: 'missing-run-script',
+      severity: 'error',
+      title: 'No runnable npm script found',
+      description:
+        availableScripts.length > 0
+          ? `No dev, start, or serve script was found. Available npm scripts are: ${availableScripts.join(', ')}.`
+          : 'No dev, start, or serve script was found, so DevHub does not know which command should start a BrowserPod preview server.',
+      recommendation:
+        'Add a dev, start, or serve script that launches a local web server, or expose a manual command in the UI for this repository.',
+      ...(availableScripts.length > 0 ? { evidence: availableScripts.join(', ') } : {}),
+    });
+  } else if (!entryPoint && runtimeProfile.projectKind !== 'unknown') {
+    const titleByKind: Record<Exclude<RepoProjectKind, 'unknown'>, string> = {
+      'preview-app': 'Preview command needs confirmation',
+      'api-server': 'Server command needs confirmation',
+      library: 'Library repo, no live preview expected',
+      cli: 'CLI repo, manual command recommended',
+      'test-only': 'Validation-only repo, no live preview expected',
+    };
+    const code = runtimeProfile.supportLevel === 'manual-only' ? 'manual-only-repo' : 'analysis-only-repo';
+    blockerDetails.push({
+      code,
+      severity: runtimeProfile.supportLevel === 'manual-only' ? 'warning' : 'info',
+      title: titleByKind[runtimeProfile.projectKind],
+      description: runtimeProfile.reasoning,
+      recommendation: runtimeProfile.manualCommands.length
+        ? `Use a suggested manual command such as ${runtimeProfile.manualCommands[0].command}.`
+        : 'Use DevHub analysis for this repository, or add a dev/start/serve script if it should expose a live preview.',
+      evidence: runtimeProfile.evidence.join('; ') || undefined,
+    });
   }
   if (blockedDependencies.length > 0) {
     blockers.push(`Unsupported native/runtime dependencies: ${blockedDependencies.join(', ')}`);
+    blockerDetails.push({
+      code: 'unsupported-native-dependency',
+      severity: 'warning',
+      title: 'Unsupported native dependency',
+      description:
+        'BrowserPod runs Node.js inside WebAssembly. Packages with native binaries or heavyweight runtime hooks often fail to install or execute inside the sandbox.',
+      recommendation:
+        'Replace these packages with WebAssembly/browser-friendly alternatives, make them optional for preview mode, or keep the repo analysis-only.',
+      evidence: blockedDependencies.join(', '),
+    });
   }
 
   const result: RunnabilityResult = {
-    canRun: blockers.length === 0,
+    canRun: runtimeProfile.supportLevel === 'auto-preview' && blockers.length === 0,
     entryPoint,
+    autoCommand: runtimeProfile.autoCommand,
+    manualCommands: runtimeProfile.manualCommands,
+    runtimeProfile,
     blockers,
+    blockerDetails,
   };
 
   if (previewPaths.length > 0) {
@@ -407,11 +812,162 @@ function lineNumberForMatch(content: string, pattern: RegExp): number | null {
   return content.slice(0, match.index).split('\n').length;
 }
 
+function knownVersionRisk(packageName: string, version: string): SecurityScan['dependencyRisks'][number] | null {
+  const risk = knownBadPackageVersions[packageName]?.[version];
+
+  if (!risk) {
+    return null;
+  }
+
+  return {
+    packageName,
+    version,
+    severity: risk.severity,
+    risk: risk.risk,
+    reason: risk.reason,
+    recommendation: 'Do not execute this exact version. Upgrade to a patched version, regenerate the lockfile, and verify the dependency source.',
+    confidence: 'high',
+  };
+}
+
+function lockfilePackageName(path: string): string | null {
+  const marker = 'node_modules/';
+  const index = path.lastIndexOf(marker);
+
+  if (index === -1) {
+    return null;
+  }
+
+  return path.slice(index + marker.length);
+}
+
+function detectPackageLockRisks(file: ExtractionFile): SecurityScan['dependencyRisks'] {
+  const parsed = parseJsonObject(file.content);
+  const risks: SecurityScan['dependencyRisks'] = [];
+
+  if (isRecord(parsed.packages)) {
+    for (const [path, value] of Object.entries(parsed.packages)) {
+      if (!isRecord(value) || typeof value.version !== 'string') {
+        continue;
+      }
+
+      const packageName = lockfilePackageName(path);
+      const risk = packageName ? knownVersionRisk(packageName, value.version) : null;
+
+      if (risk) {
+        risks.push(risk);
+      }
+    }
+  }
+
+  if (isRecord(parsed.dependencies)) {
+    for (const [packageName, value] of Object.entries(parsed.dependencies)) {
+      if (!isRecord(value) || typeof value.version !== 'string') {
+        continue;
+      }
+
+      const risk = knownVersionRisk(packageName, value.version);
+
+      if (risk) {
+        risks.push(risk);
+      }
+    }
+  }
+
+  return risks;
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function detectTextLockRisks(file: ExtractionFile): SecurityScan['dependencyRisks'] {
+  const risks: SecurityScan['dependencyRisks'] = [];
+
+  for (const [packageName, versions] of Object.entries(knownBadPackageVersions)) {
+    for (const version of Object.keys(versions)) {
+      const escapedName = escapeRegex(packageName);
+      const escapedVersion = escapeRegex(version);
+      const pattern = new RegExp(`${escapedName}[^\n]{0,80}(?:version\\s+["']${escapedVersion}["']|@${escapedVersion}|version:\\s*${escapedVersion})`, 'i');
+      const risk = pattern.test(file.content) ? knownVersionRisk(packageName, version) : null;
+
+      if (risk) {
+        risks.push(risk);
+      }
+    }
+  }
+
+  return risks;
+}
+
+function detectKnownLockfileRisks(files: ExtractionFile[]): SecurityScan['dependencyRisks'] {
+  const risks = files.flatMap((file) => {
+    const name = basename(file.path).toLowerCase();
+
+    if (name === 'package-lock.json') {
+      return detectPackageLockRisks(file);
+    }
+
+    if (name === 'yarn.lock' || name === 'pnpm-lock.yaml') {
+      return detectTextLockRisks(file);
+    }
+
+    return [];
+  });
+  const unique = new Map<string, SecurityScan['dependencyRisks'][number]>();
+
+  for (const risk of risks) {
+    unique.set(`${risk.packageName}:${risk.version}`, risk);
+  }
+
+  return [...unique.values()];
+}
+
+function scoreNpmScript(scriptName: string, command: string): {
+  severity: SecuritySeverity;
+  confidence: SecurityConfidence;
+  shouldReport: boolean;
+} {
+  const isLifecycleScript = /^(preinstall|install|postinstall|prepare)$/.test(scriptName);
+  const isInstallLifecycle = /^(preinstall|install|postinstall)$/.test(scriptName);
+  const remoteFetch = /\b(curl|wget|Invoke-WebRequest)\b/i.test(command);
+  const shellPipe = /\|\s*(?:bash|sh|node|powershell)\b|\b(?:bash|sh)\s+-c\b/i.test(command);
+  const credentialPath = /(?:\.ssh|\.aws|\.npmrc|\.gitconfig|id_rsa|credentials)/i.test(command);
+  const destructive = /\brm\s+-rf\b|\bchmod\s+\+x\b/i.test(command);
+  const childProcess = /\b(child_process|execSync|spawn\s*\(|exec\s*\(|node\s+-e)\b/i.test(command);
+  const obfuscated = /\b(base64|atob|fromCharCode|eval\s*\(|Function\s*\()\b/i.test(command);
+  const suspicious = remoteFetch || shellPipe || credentialPath || destructive || childProcess || obfuscated;
+
+  if (isLifecycleScript && suspicious) {
+    return {
+      severity: isInstallLifecycle || remoteFetch || credentialPath || destructive ? 'high' : 'medium',
+      confidence: 'medium',
+      shouldReport: true,
+    };
+  }
+
+  if (suspicious) {
+    return { severity: 'medium', confidence: 'medium', shouldReport: true };
+  }
+
+  if (scriptName === 'prepare') {
+    return { severity: 'info', confidence: 'low', shouldReport: true };
+  }
+
+  if (isInstallLifecycle) {
+    return { severity: 'low', confidence: 'low', shouldReport: true };
+  }
+
+  return { severity: 'info', confidence: 'low', shouldReport: false };
+}
+
 function buildFallbackSecurityScan(files: ExtractionFile[], packageMetadata: PackageMetadata): SecurityScan {
   const findings: SecurityFinding[] = [];
   const dependencyRisks: SecurityScan['dependencyRisks'] = [];
   const packageFile = findPackageJson(files);
   const dependencyEntries = Object.entries({ ...packageMetadata.dependencies, ...packageMetadata.devDependencies });
+
+  dependencyRisks.push(...detectKnownLockfileRisks(files));
 
   for (const [packageName, version] of dependencyEntries) {
     if (!suspiciousDependencyNames.has(packageName)) {
@@ -431,21 +987,20 @@ function buildFallbackSecurityScan(files: ExtractionFile[], packageMetadata: Pac
 
   if (packageFile) {
     for (const [scriptName, command] of Object.entries(packageMetadata.scripts)) {
-      const isLifecycleScript = /^(preinstall|install|postinstall|prepare)$/.test(scriptName);
-      const suspiciousCommandPattern = /\b(curl|wget|Invoke-WebRequest|powershell|bash\s+-c|sh\s+-c|node\s+-e|chmod|rm\s+-rf|nc\s+-|netcat|base64)\b/i;
+      const scriptRisk = scoreNpmScript(scriptName, command);
 
-      if (isLifecycleScript || suspiciousCommandPattern.test(command)) {
+      if (scriptRisk.shouldReport) {
         findings.push(
           securityFinding(
             `Review npm script "${scriptName}"`,
-            isLifecycleScript && suspiciousCommandPattern.test(command) ? 'high' : 'medium',
+            scriptRisk.severity,
             'script',
             packageFile.path,
             lineNumberForMatch(packageFile.content, new RegExp(`"${scriptName}"\\s*:`)),
             `${scriptName}: ${command}`,
             'Install or lifecycle scripts can execute automatically during dependency installation and are a common supply-chain abuse path.',
             'Manually inspect the command, remove opaque network/shell behavior where possible, and pin trusted dependencies.',
-            isLifecycleScript && suspiciousCommandPattern.test(command) ? 'medium' : 'low'
+            scriptRisk.confidence
           )
         );
       }
@@ -538,6 +1093,42 @@ function buildFallbackSecurityScan(files: ExtractionFile[], packageMetadata: Pac
   };
 }
 
+function buildRunGuidance(runnability: RunnabilityResult): string {
+  const profile = runnability.runtimeProfile;
+  const manualLines = runnability.manualCommands?.length
+    ? [
+        'Suggested manual commands:',
+        ...runnability.manualCommands.map((command) => `- \`${command.command}\` - ${command.reason}`),
+      ]
+    : [];
+
+  if (profile?.previewExpected && profile.autoCommand) {
+    return [`Run in BrowserPod with: \`${profile.autoCommand}\`.`, ...manualLines].join('\n');
+  }
+
+  if (profile?.projectKind === 'library') {
+    return ['This is a library, not a live preview app.', ...manualLines].join('\n');
+  }
+
+  if (profile?.projectKind === 'cli') {
+    return ['This is a CLI/tooling repo, not a preview app.', ...manualLines].join('\n');
+  }
+
+  if (profile?.projectKind === 'test-only') {
+    return ['This repository is validation-oriented and does not expose a live preview app.', ...manualLines].join('\n');
+  }
+
+  if (profile?.projectKind === 'unknown') {
+    return ['No reliable preview command could be inferred.', ...manualLines].join('\n');
+  }
+
+  if (runnability.canRun && runnability.entryPoint) {
+    return `Run with \`npm run ${runnability.entryPoint}\`.`;
+  }
+
+  return `Not automatically runnable: ${runnability.blockers.join('; ') || 'No BrowserPod preview command found.'}`;
+}
+
 function buildFallbackAiReadme(
   repoName: string,
   analysis: ExtractionResult,
@@ -549,6 +1140,12 @@ function buildFallbackAiReadme(
     .slice(0, 40)
     .map(([name, version]) => `- ${name}: ${version}`)
     .join('\n');
+  const blockerDetailLines = runnability.blockerDetails?.length
+    ? runnability.blockerDetails
+        .map((blocker) => `- ${blocker.title}: ${blocker.description} Recommendation: ${blocker.recommendation}`)
+        .join('\n')
+    : '';
+  const runGuidance = buildRunGuidance(runnability);
 
   return [
     `# ${title || repoName}`,
@@ -565,9 +1162,8 @@ function buildFallbackAiReadme(
     `- Database: ${techStack.database || 'None detected'}`,
     '',
     '## Run',
-    runnability.canRun && runnability.entryPoint
-      ? `Run with \`npm run ${runnability.entryPoint}\`.`
-      : `Not automatically runnable: ${runnability.blockers.join('; ')}`,
+    runGuidance,
+    blockerDetailLines,
     '',
     '## Notable Functions',
     functions.length
