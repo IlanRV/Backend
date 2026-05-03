@@ -238,6 +238,13 @@ router.delete(
   })
 );
 
+router.delete(
+  '/workspaces/:workspaceId/repos/:repoId',
+  asyncHandler(async () => {
+    throw createHttpError(501, 'Workspace-scoped repo deletion is not implemented yet');
+  })
+);
+
 router.post(
   '/repos/:id/run',
   asyncHandler(async (req, res) => {
