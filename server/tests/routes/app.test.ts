@@ -338,6 +338,36 @@ describe('backend routes', () => {
     expect(await getDoc('repo_security_events', 'event-1')).toBeNull();
   });
 
+  it('deletes repos through a workspace-scoped route', async () => {
+    await setDoc('workspaces', 'workspace-1', workspace());
+    await setDoc('workspaces', 'workspace-2', workspace({ workspaceId: 'workspace-2', name: 'Other' }));
+    await setDoc('repos', 'repo-1', repo());
+    await setDoc('repos', 'repo-other', repo({ repoId: 'repo-other', workspaceId: 'workspace-2' }));
+    await setDoc('chat_messages', 'message-1', {
+      messageId: 'message-1',
+      scopeType: 'repo',
+      scopeId: 'repo-1',
+      role: 'user',
+      content: 'hi',
+      timestamp: '1',
+    });
+    await setDoc('repo_files', 'file-1', { repoFileId: 'file-1', repoId: 'repo-1', path: 'src/index.ts' });
+    await setDoc('repo_security_events', 'event-1', { eventId: 'event-1', repoId: 'repo-1', title: 'timeout' });
+
+    await request(app).delete('/api/workspaces/missing/repos/repo-1').expect(404);
+    await request(app).delete('/api/workspaces/workspace-1/repos/missing').expect(404);
+    await request(app).delete('/api/workspaces/workspace-1/repos/repo-other').expect(404);
+
+    const response = await request(app).delete('/api/workspaces/workspace-1/repos/repo-1').expect(200);
+
+    expect(response.body).toEqual({ success: true, repoId: 'repo-1', workspaceId: 'workspace-1' });
+    expect(await getDoc('repos', 'repo-1')).toBeNull();
+    expect(await getDoc('repos', 'repo-other')).toMatchObject({ repoId: 'repo-other', workspaceId: 'workspace-2' });
+    expect(await getDoc('chat_messages', 'message-1')).toBeNull();
+    expect(await getDoc('repo_files', 'file-1')).toBeNull();
+    expect(await getDoc('repo_security_events', 'event-1')).toBeNull();
+  });
+
   it('requires run confirmation for high-risk or unrunnable repos', async () => {
     await setDoc('repos', 'repo-risky', repo({
       repoId: 'repo-risky',
