@@ -1,6 +1,6 @@
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Repo, Workspace } from '../../src/types';
+import type { Repo, SecurityScan, Workspace } from '../../src/types';
 
 const firebaseState = vi.hoisted(() => ({
   collections: new Map<string, Map<string, any>>(),
@@ -43,6 +43,7 @@ vi.mock('../../src/lib/firebase', () => {
       workspaces: 'workspaceId',
       repos: 'repoId',
       repo_files: 'repoFileId',
+      repo_security_events: 'eventId',
       chat_messages: 'messageId',
     };
     return fields[collection] || `${collection.slice(0, -1)}Id`;
@@ -167,6 +168,18 @@ function repo(overrides: Partial<Repo> = {}): Repo {
     runScript: null,
     portalUrl: null,
     createdAt: '2026-05-02T00:00:01.000Z',
+    ...overrides,
+  };
+}
+
+function securityScan(overrides: Partial<SecurityScan> = {}): SecurityScan {
+  return {
+    riskLevel: 'low',
+    summary: 'No obvious suspicious indicators.',
+    findings: [],
+    dependencyRisks: [],
+    scannedFiles: ['package.json'],
+    notes: [],
     ...overrides,
   };
 }
@@ -319,6 +332,129 @@ describe('backend routes', () => {
     expect(await getDoc('repos', 'repo-1')).toBeNull();
     expect(await getDoc('chat_messages', 'message-1')).toBeNull();
     expect(await getDoc('repo_files', 'file-1')).toBeNull();
+  });
+
+  it('requires run confirmation for high-risk or unrunnable repos', async () => {
+    await setDoc('repos', 'repo-risky', repo({
+      repoId: 'repo-risky',
+      analysis: {
+        techStack: { language: 'JavaScript', framework: null, runtime: 'Node.js', buildTool: null, testingFramework: null, database: null, otherTools: [] },
+        overview: { oneLiner: 'Risky', summary: 'Risky', purpose: 'Demo', targetUsers: 'Developers' },
+        functions: [],
+        dependencies: {},
+        security: securityScan({ riskLevel: 'high', summary: 'Suspicious install script found.' }),
+      },
+      runnability: { canRun: true, entryPoint: 'dev', blockers: [] },
+    }));
+    await setDoc('repos', 'repo-blocked', repo({
+      repoId: 'repo-blocked',
+      runnability: {
+        canRun: false,
+        entryPoint: null,
+        blockers: ['Missing package.json'],
+        blockerDetails: [{
+          code: 'missing-package-json',
+          severity: 'error',
+          title: 'No package.json found',
+          description: 'DevHub could not find package metadata for this repo.',
+          recommendation: 'Add a package.json or run it manually in the sandbox.',
+        }],
+      },
+    }));
+
+    await request(app)
+      .post('/api/repos/repo-risky/run')
+      .send({ portalUrl: 'https://preview.example.test' })
+      .expect(409);
+    await request(app)
+      .post('/api/repos/repo-risky/run')
+      .send({ portalUrl: 'https://preview.example.test', sandboxConfirmed: true })
+      .expect(200);
+    await request(app)
+      .post('/api/repos/repo-blocked/run')
+      .send({ portalUrl: 'https://manual.example.test' })
+      .expect(409);
+    const manual = await request(app)
+      .post('/api/repos/repo-blocked/run')
+      .send({ portalUrl: 'https://manual.example.test', manualOverride: true })
+      .expect(200);
+
+    expect(manual.body).toMatchObject({ status: 'running', portalUrl: 'https://manual.example.test' });
+  });
+
+  it('records runtime security events and returns combined security state', async () => {
+    await setDoc('repos', 'repo-1', repo({
+      analysis: {
+        techStack: { language: 'TypeScript', framework: null, runtime: 'Node.js', buildTool: null, testingFramework: null, database: null, otherTools: [] },
+        overview: { oneLiner: 'Demo', summary: 'Demo', purpose: 'Demo', targetUsers: 'Developers' },
+        functions: [],
+        dependencies: {},
+        security: securityScan({ riskLevel: 'medium', summary: 'Static scan found script risk.' }),
+      },
+    }));
+
+    const created = await request(app)
+      .post('/api/repos/repo-1/security-events')
+      .send({
+        source: 'browserpod',
+        phase: 'install',
+        category: 'resource',
+        severity: 'high',
+        title: 'Install timed out',
+        description: 'npm install did not finish within 60 seconds.',
+        evidence: 'npm install exceeded 60000ms',
+        command: 'npm install --ignore-scripts',
+      })
+      .expect(201);
+
+    expect(created.body).toMatchObject({
+      success: true,
+      event: {
+        repoId: 'repo-1',
+        source: 'browserpod',
+        phase: 'install',
+        category: 'resource',
+        severity: 'high',
+        title: 'Install timed out',
+        command: 'npm install --ignore-scripts',
+      },
+      runtimeSecurity: {
+        riskLevel: 'high',
+        eventCount: 1,
+      },
+    });
+    expect(await getDoc('repos', 'repo-1')).toMatchObject({
+      runtimeSecurity: { riskLevel: 'high', eventCount: 1 },
+    });
+
+    const security = await request(app).get('/api/repos/repo-1/security').expect(200);
+
+    expect(security.body.staticSecurity).toMatchObject({ riskLevel: 'medium' });
+    expect(security.body.runnability).toBeNull();
+    expect(security.body.runtimeSecurity).toMatchObject({
+      riskLevel: 'high',
+      eventCount: 1,
+      events: [expect.objectContaining({ title: 'Install timed out', evidence: 'npm install exceeded 60000ms' })],
+    });
+  });
+
+  it('validates runtime security event requests', async () => {
+    await request(app)
+      .post('/api/repos/missing/security-events')
+      .send({ severity: 'high', title: 'Install timed out', description: 'timeout' })
+      .expect(404);
+
+    await setDoc('repos', 'repo-1', repo());
+
+    await request(app)
+      .post('/api/repos/repo-1/security-events')
+      .send({ severity: 'bad', title: 'Install timed out', description: 'timeout' })
+      .expect(400);
+    await request(app)
+      .post('/api/repos/repo-1/security-events')
+      .send({ severity: 'high', title: '', description: 'timeout' })
+      .expect(400);
+    await request(app).get('/api/repos/missing/security').expect(404);
   });
 
   it('starts extraction, caches files, dedupes active work, and returns extraction state', async () => {
