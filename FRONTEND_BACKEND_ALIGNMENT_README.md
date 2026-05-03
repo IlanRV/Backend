@@ -4,6 +4,13 @@
 
 The backend work needed for this frontend integration is implemented on the `runtime-profile-inference` branch. It includes the earlier runtime security telemetry work as well.
 
+BrowserPod is mandatory for frontend execution.
+
+- All executable repo actions in the frontend must run through BrowserPod only.
+- No local shell, no host Node.js process, and no fallback execution path outside BrowserPod.
+- Manual commands are sandbox commands, not machine commands.
+- If the frontend cannot run a command in BrowserPod, it should not run it at all.
+
 Validated backend state:
 
 - `npm test`: 70 tests passing
@@ -30,6 +37,14 @@ The frontend should use these new semantics instead of treating every `canRun: f
 Use `runnability.runtimeProfile` as the source of truth for repo type and preview behavior.
 
 Use `runnability.canRun` only for the final yes/no decision of whether the frontend should show the normal automatic BrowserPod preview button.
+
+BrowserPod is the only allowed runtime in the frontend. This applies to:
+
+- automatic preview commands
+- manual commands
+- retries with install scripts enabled
+- CLI help commands
+- validation commands like `npm test`
 
 A repo can be healthy and useful even when `canRun` is `false`. For example:
 
@@ -275,7 +290,12 @@ Show:
 
 - no normal preview button
 - manual command cards
-- optional "Run manual command in sandbox" if the frontend supports this
+- optional "Run manual command in BrowserPod sandbox" if the frontend supports this
+
+Important:
+
+- manual commands must still execute inside BrowserPod
+- the frontend must never treat a manual command as permission to run on the host machine
 
 ### 3. Analysis-only repo
 
@@ -585,6 +605,14 @@ Only after confirmation should the frontend use `sandboxConfirmed: true`.
 ### Step 8. BrowserPod execution
 
 Never execute repo code outside BrowserPod.
+
+This is a hard requirement, not a preference.
+
+- no host terminal execution
+- no local `npm install`
+- no local `npm run dev`
+- no local CLI execution
+- no fallback run path if BrowserPod fails
 
 Recommended lifecycle:
 
