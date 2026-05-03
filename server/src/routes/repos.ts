@@ -209,6 +209,20 @@ router.post(
   })
 );
 
+router.post(
+  '/repos/:id/security-events',
+  asyncHandler(async () => {
+    throw createHttpError(501, 'Runtime security events are not implemented yet');
+  })
+);
+
+router.get(
+  '/repos/:id/security',
+  asyncHandler(async () => {
+    throw createHttpError(501, 'Runtime security summary is not implemented yet');
+  })
+);
+
 router.get(
   '/repos/:id/file',
   asyncHandler(async (req, res) => {
