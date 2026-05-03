@@ -43,7 +43,9 @@ export const config = {
   ],
   firebase: {
     projectId: process.env.FIREBASE_PROJECT_ID || '',
-    privateKey: (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+    privateKey: (process.env.FIREBASE_PRIVATE_KEY || '')
+      .replace(/^"|"$/g, '')   // strip surrounding quotes (dotenv strips them, raw env vars may not)
+      .replace(/\\n/g, '\n'),   // convert literal \n to real newlines
     clientEmail: process.env.FIREBASE_CLIENT_EMAIL || '',
   },
   openrouter: {
