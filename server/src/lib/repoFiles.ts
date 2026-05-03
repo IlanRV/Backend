@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { getDoc, setDoc } from './firebase';
+import { getCollection, getDoc, setDoc } from './firebase';
 import type { RepoFile } from '../types';
 
 interface SourceFile {
@@ -44,4 +44,13 @@ export async function saveRepoFiles(
 
 export async function getRepoFile(repoId: string, path: string): Promise<RepoFile | null> {
   return getDoc<RepoFile>('repo_files', repoFileDocId(repoId, path));
+}
+
+export async function listRepoFiles(repoId: string): Promise<SourceFile[]> {
+  const snapshot = await getCollection('repo_files').where('repoId', '==', repoId).get();
+
+  return snapshot.docs
+    .map((document) => document.data() as RepoFile)
+    .sort((left, right) => left.path.localeCompare(right.path))
+    .map((file) => ({ path: file.path, content: file.content }));
 }

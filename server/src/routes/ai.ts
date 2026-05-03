@@ -5,13 +5,26 @@ import { extractAll, type ExtractionFile } from '../ai/extraction';
 import { getDoc, setDoc } from '../lib/firebase';
 import { asyncHandler, createHttpError, getRouteParam } from '../lib/http';
 import { createLogger } from '../lib/logger';
-import { saveRepoFiles } from '../lib/repoFiles';
-import type { FileTreeNode, Repo } from '../types';
+import { listRepoFiles, saveRepoFiles } from '../lib/repoFiles';
+import type { AnalysisProgress, FileTreeNode, Repo } from '../types';
 
 const router = Router();
 const logger = createLogger('routes-ai');
 const activeExtractions = new Map<string, string>();
-const staleAnalysisMs = 15 * 60 * 1000;
+const analysisTimeoutMs = 15 * 60 * 1000;
+
+function createAnalysisProgress(
+  phase: AnalysisProgress['phase'],
+  percent: number,
+  message: string
+): AnalysisProgress {
+  return {
+    phase,
+    percent: Math.max(0, Math.min(100, Math.round(percent))),
+    message,
+    updatedAt: new Date().toISOString(),
+  };
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -21,18 +34,38 @@ function isExtractionFile(value: unknown): value is ExtractionFile {
   return isRecord(value) && typeof value.path === 'string' && typeof value.content === 'string';
 }
 
-function getRequestFiles(body: unknown): ExtractionFile[] {
+function getOptionalRequestFiles(body: unknown): ExtractionFile[] | null {
   if (!isRecord(body) || !Array.isArray(body.files)) {
-    throw createHttpError(400, 'files must be an array of { path, content } objects');
+    return null;
   }
 
   const files = body.files.filter(isExtractionFile).filter((file) => file.path.trim().length > 0);
 
-  if (files.length === 0) {
-    throw createHttpError(400, 'At least one source file is required for extraction');
+  return files.length > 0 ? files : null;
+}
+
+function shouldUseStoredFiles(body: unknown): boolean {
+  return isRecord(body) && body.useStoredFiles === true;
+}
+
+async function getExtractionFiles(body: unknown, repo: Repo): Promise<ExtractionFile[]> {
+  const requestFiles = getOptionalRequestFiles(body);
+
+  if (requestFiles) {
+    return requestFiles;
   }
 
-  return files;
+  if (!shouldUseStoredFiles(body)) {
+    throw createHttpError(400, 'files must be an array of { path, content } objects');
+  }
+
+  const storedFiles = await listRepoFiles(repo.repoId);
+
+  if (storedFiles.length === 0) {
+    throw createHttpError(409, 'No cached source files are available for this repo yet');
+  }
+
+  return storedFiles;
 }
 
 function collectTreePaths(node: unknown, output: string[]): void {
@@ -143,7 +176,54 @@ function isFreshAnalyzing(repo: Repo): boolean {
   }
 
   const startedAt = Date.parse(repo.analysisStartedAt);
-  return Number.isFinite(startedAt) && Date.now() - startedAt < staleAnalysisMs;
+  return Number.isFinite(startedAt) && Date.now() - startedAt < analysisTimeoutMs;
+}
+
+function isTimedOutAnalyzing(repo: Repo): boolean {
+  if (repo.status !== 'analyzing' || !repo.analysisStartedAt) {
+    return false;
+  }
+
+  const startedAt = Date.parse(repo.analysisStartedAt);
+  return Number.isFinite(startedAt) && Date.now() - startedAt >= analysisTimeoutMs;
+}
+
+async function resolveTimedOutAnalysis<TRepo extends Repo>(repo: TRepo): Promise<TRepo> {
+  if (!isTimedOutAnalyzing(repo)) {
+    return repo;
+  }
+
+  const updatedAt = new Date().toISOString();
+  const analysisProgress = createAnalysisProgress(
+    'error',
+    100,
+    'Extraction timed out. Retry to start a fresh analysis.'
+  );
+  const nextRepo = {
+    ...repo,
+    status: 'error',
+    aiReadmeStatus: 'error',
+    analysisError: 'Extraction timed out before the background job completed.',
+    analysisProgress,
+    updatedAt,
+  } satisfies TRepo;
+
+  activeExtractions.delete(repo.repoId);
+  await setDoc(
+    'repos',
+    repo.repoId,
+    {
+      status: nextRepo.status,
+      aiReadmeStatus: nextRepo.aiReadmeStatus,
+      analysisError: nextRepo.analysisError,
+      analysisProgress,
+      updatedAt,
+    },
+    { merge: true }
+  );
+
+  logger.warn('ai_extraction_marked_timed_out', { repoId: repo.repoId });
+  return nextRepo;
 }
 
 function errorMessage(error: unknown): string {
@@ -154,13 +234,15 @@ router.post(
   '/extract/:repoId',
   asyncHandler(async (req, res) => {
     const repoId = getRouteParam(req, 'repoId');
-    const repo = await getDoc<Repo>('repos', repoId);
+    let repo = await getDoc<Repo>('repos', repoId);
 
     if (!repo) {
       throw createHttpError(404, 'Repo not found');
     }
 
-    const files = getRequestFiles(req.body);
+    repo = await resolveTimedOutAnalysis(repo);
+
+    const files = await getExtractionFiles(req.body, repo);
     const fileTree = getRequestFileTree(req.body, files);
     const structuredFileTree = getStructuredFileTree(req.body);
     const sourceHash = createExtractionSourceHash(fileTree, files);
@@ -181,20 +263,34 @@ router.post(
     ]);
 
     if (activeExtractions.has(repo.repoId) || isFreshAnalyzing(repo)) {
-      res.status(202).json({ success: true, extractionId: repo.repoId, status: 'analyzing', deduped: true });
+      res.status(202).json({
+        success: true,
+        extractionId: repo.repoId,
+        status: 'analyzing',
+        deduped: true,
+        analysisProgress: repo.analysisProgress ?? createAnalysisProgress('queued', 10, 'Extraction already running'),
+      });
       return;
     }
 
-    if (repo.analysis && repo.aiReadme && repo.analysisSourceHash === sourceHash) {
-      res.json({ success: true, extractionId: repo.repoId, status: repo.status, cached: true });
+    if (repo.analysis?.security && repo.aiReadme && repo.analysisSourceHash === sourceHash) {
+      res.json({
+        success: true,
+        extractionId: repo.repoId,
+        status: repo.status,
+        cached: true,
+        analysisProgress: repo.analysisProgress ?? null,
+      });
       return;
     }
 
+    const analysisProgress = createAnalysisProgress('queued', 10, 'Queued extraction job');
     const repoUpdate: Partial<Repo> = {
       status: 'analyzing',
       analysisSourceHash: sourceHash,
       analysisStartedAt: new Date().toISOString(),
       analysisError: null,
+      analysisProgress,
       analysisModel: config.openrouter.apiKey ? config.openrouter.model : null,
       aiReadmeStatus: 'pending',
       updatedAt: new Date().toISOString(),
@@ -217,6 +313,7 @@ router.post(
             status: 'error' satisfies Repo['status'],
             aiReadmeStatus: 'error' satisfies NonNullable<Repo['aiReadmeStatus']>,
             analysisError: errorMessage(error),
+            analysisProgress: createAnalysisProgress('error', 100, 'Extraction failed'),
             updatedAt: new Date().toISOString(),
           },
           { merge: true }
@@ -226,7 +323,7 @@ router.post(
         activeExtractions.delete(repo.repoId);
       });
 
-    res.status(202).json({ success: true, extractionId: repo.repoId, status: 'analyzing' });
+    res.status(202).json({ success: true, extractionId: repo.repoId, status: 'analyzing', analysisProgress });
   })
 );
 
@@ -240,28 +337,31 @@ router.get(
       throw createHttpError(404, 'Repo not found');
     }
 
+    const currentRepo = await resolveTimedOutAnalysis(repo);
     res.json({
       success: true,
-      extractionId: repo.repoId,
-      status: repo.status,
+      extractionId: currentRepo.repoId,
+      status: currentRepo.status,
       aiReadmeStatus:
-        repo.aiReadmeStatus ??
-        (repo.aiReadme
+        currentRepo.aiReadmeStatus ??
+        (currentRepo.aiReadme
           ? 'ready'
-          : repo.status === 'analyzing' || repo.status === 'cloning'
+          : currentRepo.status === 'analyzing' || currentRepo.status === 'cloning'
             ? 'pending'
-            : repo.status === 'error'
+            : currentRepo.status === 'error'
               ? 'error'
               : null),
-      techStack: repo.analysis?.techStack || null,
-      overview: repo.analysis?.overview || null,
-      functions: repo.analysis?.functions || [],
-      dependencies: repo.analysis?.dependencies || {},
-      aiReadme: repo.aiReadme || null,
-      runnability: repo.runnability || null,
-      analysisUpdatedAt: repo.analysisUpdatedAt || null,
-      analysisModel: repo.analysisModel || null,
-      analysisError: repo.analysisError || null,
+      techStack: currentRepo.analysis?.techStack || null,
+      overview: currentRepo.analysis?.overview || null,
+      functions: currentRepo.analysis?.functions || [],
+      dependencies: currentRepo.analysis?.dependencies || {},
+      security: currentRepo.analysis?.security || null,
+      aiReadme: currentRepo.aiReadme || null,
+      runnability: currentRepo.runnability || null,
+      analysisUpdatedAt: currentRepo.analysisUpdatedAt || null,
+      analysisModel: currentRepo.analysisModel || null,
+      analysisError: currentRepo.analysisError || null,
+      analysisProgress: currentRepo.analysisProgress || null,
     });
   })
 );

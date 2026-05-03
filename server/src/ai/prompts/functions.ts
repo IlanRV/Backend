@@ -16,13 +16,13 @@ interface SourceFile {
   content: string;
 }
 
-const supportedExtensions = new Set(['js', 'ts', 'jsx', 'tsx', 'mjs', 'cjs']);
+const supportedExtensions = new Set(['js', 'ts', 'jsx', 'tsx', 'mjs', 'cjs', 'py']);
 const ignoredPathFragments = ['/node_modules/', '/dist/', '/build/', '/coverage/', '/.git/'];
-const maxRankedSourceFiles = 24;
+const maxRankedSourceFiles = 48;
 const maxFilesPerChunk = 8;
 const chunkOverlapFiles = 1;
-const maxChunks = 3;
-const maxCharsPerFile = 3200;
+const maxChunks = 6;
+const maxCharsPerFile = 5200;
 
 function extensionOf(path: string): string {
   return path.split('.').pop()?.toLowerCase() || '';
@@ -38,10 +38,14 @@ function scoreSourceFile(file: SourceFile): number {
   let score = 0;
 
   if (path.includes('/src/')) score += 10;
-  if (/(route|router|controller|handler|service|api|model|schema|index)\./.test(path)) score += 12;
+  if (/(route|router|controller|handler|service|api|model|schema|index|hook|component|page|view|store|middleware|validator|auth)\./.test(path)) score += 12;
   if (/\bexport\b/.test(file.content)) score += 20;
   if (/\brouter\.(get|post|put|patch|delete)\b|\bapp\.(get|post|put|patch|delete)\b/.test(file.content)) score += 20;
   if (/\bclass\s+[A-Za-z_$][\w$]*\b|\bfunction\s+[A-Za-z_$][\w$]*\b/.test(file.content)) score += 8;
+  if (/\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/.test(file.content)) score += 8;
+  if (/^\s*(?:async\s+)?[A-Za-z_$][\w$]*\s*\([^)]*\)\s*[:{]/m.test(file.content)) score += 6;
+  if (/\bexport\s+default\b|\bmodule\.exports\b/.test(file.content)) score += 8;
+  if (/\b(use[A-Z][A-Za-z0-9_]*|[A-Z][A-Za-z0-9_]*(?:Page|View|Panel|Provider|Component))\b/.test(file.content)) score += 5;
 
   return score;
 }
@@ -80,7 +84,7 @@ function buildPromptForChunk(
 
   const system = [
     'You are a precise code documentation expert for DevHub.',
-    'Analyze visible source snippets and document public code surfaces, including exported symbols and HTTP route handlers.',
+    'Analyze visible source snippets and document public code surfaces, including exported symbols, route handlers, React components, hooks, classes, service functions, middleware, and important internal helpers that explain the repo behavior.',
     'Do not invent behavior from files or lines that are not shown.',
     'Always respond with valid JSON only. No markdown, code fences, or extra text.',
   ].join(' ');
@@ -111,9 +115,13 @@ Return a JSON array with this exact structure:
 ]
 
 Rules:
-- Prioritize exported functions/classes, route handlers, middleware, utilities, models, controllers, and shared helpers.
+- Prioritize exported functions/classes, route handlers, middleware, React components/hooks, utilities, models, controllers, state stores, validation helpers, and shared helpers.
+- Include important non-exported helpers when they are called by a public surface or clarify the core behavior.
 - For anonymous Express route handlers, use a stable name like "POST /api/workspaces" when the route is visible.
+- For React components, set type to "function" and use the component name as the name.
+- For class instance methods, set type to "method" and use "ClassName.methodName" as the name when visible.
 - For Express route handlers, describe the HTTP method and path if visible.
+- Write descriptions with enough detail to help a developer understand side effects, storage/network calls, validation, and error paths.
 - Use the actual file path from the snippet.
 - Line numbers should be based on the visible snippet line positions; estimate only when necessary.
 - Keep descriptions factual and implementation-oriented, not marketing-oriented.
