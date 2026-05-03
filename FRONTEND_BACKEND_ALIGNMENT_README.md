@@ -290,12 +290,21 @@ Show:
 
 - no normal preview button
 - manual command cards
-- optional "Run manual command in BrowserPod sandbox" if the frontend supports this
+- a "Run in BrowserPod" button on each manual command card
+- command logs/output in the UI after the user runs a manual command
 
 Important:
 
 - manual commands must still execute inside BrowserPod
 - the frontend must never treat a manual command as permission to run on the host machine
+- manual command buttons do not require a portal URL
+- manual commands should not call `/api/repos/:id/run` unless they actually produce a BrowserPod portal
+- use runtime security events to report timeouts, stop failures, suspicious logs, or resource abuse from manual commands
+
+BrowserPod can run more than preview commands. The frontend should treat commands in two modes:
+
+1. Preview mode: runs `npm run dev`, `npm run start`, or `npm run serve`, waits for a BrowserPod portal, then calls `/api/repos/:id/run` with the portal URL.
+2. Task mode: runs commands like `npm test`, `npm run lint`, or CLI help commands inside BrowserPod, streams output/logs, skips portal wait, and does not mark the repo as preview-running.
 
 ### 3. Analysis-only repo
 
@@ -514,17 +523,22 @@ For auto-preview:
 For library:
 
 - show "This is a library, not a live preview app."
-- show test/lint/build commands
+- show test/lint/build commands as runnable BrowserPod task buttons
+- button copy example: "Run `npm test` in BrowserPod"
+- show logs/output after the command runs
 
 For CLI:
 
 - show "This is a CLI/tooling repo, not a preview app."
-- show help/test commands
+- show help/test commands as runnable BrowserPod task buttons
+- button copy example: "Run CLI help in BrowserPod"
+- show logs/output after the command runs
 
 For test-only:
 
 - show "This repository is validation-oriented and does not expose a live preview app."
-- show test/coverage commands
+- show test/coverage commands as runnable BrowserPod task buttons
+- show logs/output after the command runs
 
 For unknown:
 
@@ -625,6 +639,18 @@ Recommended lifecycle:
 7. render portal
 8. report runtime events as needed
 9. stop/destroy sandbox on user stop
+
+Manual task command lifecycle:
+
+1. boot BrowserPod
+2. clone repo with shallow clone if possible
+3. install dependencies using safe mode first
+4. run the selected manual command inside BrowserPod
+5. stream stdout/stderr into the command card or terminal panel
+6. skip BrowserPod portal waiting unless the user selected an auto-preview command
+7. show exit status when the command finishes
+8. post runtime security events for timeout, suspicious logs, resource spikes, or stop failures
+9. destroy or reset the pod when the task is stopped or finished
 
 Install command:
 
@@ -763,6 +789,50 @@ Always show:
 
 For high-risk runs, keep a warning visible while the preview is open.
 
+## BrowserPod Manual Command UI Requirements
+
+Manual commands are first-class actions, not just text hints.
+
+For each `manualCommands[]` item, render:
+
+- command label
+- confidence badge
+- reason text
+- exact command string
+- "Run in BrowserPod" button
+- stdout/stderr output area after execution starts
+- exit status when complete
+- stop button while running
+
+Do not wait for a portal for these commands unless the command is also the selected `autoCommand` for an auto-preview repo.
+
+Recommended command card copy:
+
+```text
+Run in BrowserPod
+```
+
+Recommended helper:
+
+```ts
+function isPreviewCommand(runnability: RunnabilityResult | null, command: string): boolean {
+  const autoCommand = runnability?.autoCommand ?? runnability?.runtimeProfile?.autoCommand;
+  return Boolean(autoCommand && autoCommand === command && runnability?.runtimeProfile?.previewExpected);
+}
+```
+
+Frontend execution rule:
+
+```ts
+if (isPreviewCommand(runnability, command)) {
+  await runBrowserPodPreviewCommand(command);
+} else {
+  await runBrowserPodTaskCommand(command);
+}
+```
+
+`runBrowserPodTaskCommand()` should run the command in BrowserPod, stream logs, and skip portal URL handling.
+
 ## Suggested Component Structure
 
 ```text
@@ -774,6 +844,8 @@ RepoAnalysisPage
   DependencyRiskList
   BrowserPodRunPanel
   ManualCommandPanel
+  ManualCommandCard
+  BrowserPodTaskOutput
   RuntimeSecurityTimeline
   BrowserPodPreviewFrame
   HighRiskRunDialog
