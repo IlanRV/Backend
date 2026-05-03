@@ -43,20 +43,6 @@ export function buildAiReadmePrompt(
     ),
   ].join('\n');
 
-<<<<<<< HEAD
-=======
-  logger.debug('ai_readme_prompt_built', {
-    repoName,
-    functionCount: functions.length,
-    dependencyCount: Object.keys(dependencies).length,
-    language: techStack.language,
-    framework: techStack.framework,
-    overviewLength: overview.summary.length,
-    canRun: runnability.canRun,
-    securityRiskLevel: security.riskLevel,
-  });
-
->>>>>>> 44a93fa (security pro max)
   const system = [
     'You are a senior developer who writes practical README documentation for real repositories.',
     'Favor concrete repository evidence over generic boilerplate.',
