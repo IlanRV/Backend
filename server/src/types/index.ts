@@ -23,6 +23,7 @@ export interface Repo {
   analysisProgress?: AnalysisProgress | null;
   aiReadme: string | null;
   aiReadmeStatus?: 'pending' | 'ready' | 'error' | null;
+  runtimeSecurity?: RuntimeSecuritySummary | null;
   runnable?: boolean;
   runScript?: string | null;
   portalUrl: string | null;
@@ -136,6 +137,38 @@ export interface SecurityScan {
   dependencyRisks: SecurityDependencyRisk[];
   scannedFiles: string[];
   notes: string[];
+}
+
+export type RuntimeSecurityEventSource = 'browserpod' | 'frontend';
+export type RuntimeSecurityPhase = 'clone' | 'install' | 'start' | 'preview' | 'stop' | 'runtime';
+export type RuntimeSecurityCategory =
+  | 'filesystem'
+  | 'network'
+  | 'process'
+  | 'resource'
+  | 'install'
+  | 'sandbox'
+  | 'runtime'
+  | 'other';
+
+export interface RuntimeSecurityEvent {
+  eventId: string;
+  repoId: string;
+  source: RuntimeSecurityEventSource;
+  phase: RuntimeSecurityPhase;
+  category: RuntimeSecurityCategory;
+  severity: SecuritySeverity;
+  title: string;
+  description: string;
+  evidence?: string;
+  command?: string;
+  createdAt: string;
+}
+
+export interface RuntimeSecuritySummary {
+  riskLevel: SecuritySeverity | 'unknown';
+  eventCount: number;
+  latestEventAt: string | null;
 }
 
 export interface TechStack {
