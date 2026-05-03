@@ -31,6 +31,19 @@ function readDeepSeekModel(value: string | undefined): string {
   return model?.startsWith('deepseek/') ? model : 'deepseek/deepseek-v4-flash';
 }
 
+function normalizePrivateKey(raw: string): string {
+  let key = raw;
+  // Strip surrounding double or single quotes
+  key = key.replace(/^["']|["']$/g, '');
+  // Convert literal \n (two characters) to real newlines
+  key = key.replace(/\\n/g, '\n');
+  // Normalize Windows line endings
+  key = key.replace(/\r\n?/g, '\n');
+  // Remove leading/trailing whitespace
+  key = key.trim();
+  return key;
+}
+
 const openrouterModel = readDeepSeekModel(process.env.OPENROUTER_MODEL);
 
 export const config = {
@@ -43,10 +56,7 @@ export const config = {
   ],
   firebase: {
     projectId: process.env.FIREBASE_PROJECT_ID || '',
-    privateKey: (process.env.FIREBASE_PRIVATE_KEY || '')
-      .replace(/^"|"$/g, '')   // strip surrounding quotes (dotenv strips them, raw env vars may not)
-      .replace(/\\n/g, '\n')   // convert literal \n to real newlines (for .env file format)
-      .trim(),
+    privateKey: normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY || ''),
     clientEmail: process.env.FIREBASE_CLIENT_EMAIL || '',
   },
   openrouter: {
