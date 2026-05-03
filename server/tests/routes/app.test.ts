@@ -264,6 +264,7 @@ describe('backend routes', () => {
       timestamp: '2',
     });
     await setDoc('repo_files', 'file-1', { repoFileId: 'file-1', repoId: 'repo-1', path: 'src/index.ts' });
+    await setDoc('repo_security_events', 'event-1', { eventId: 'event-1', repoId: 'repo-1', title: 'timeout' });
 
     await request(app).delete('/api/workspaces/workspace-1').expect(200);
 
@@ -272,6 +273,7 @@ describe('backend routes', () => {
     expect(await getDoc('chat_messages', 'workspace-message')).toBeNull();
     expect(await getDoc('chat_messages', 'repo-message')).toBeNull();
     expect(await getDoc('repo_files', 'file-1')).toBeNull();
+    expect(await getDoc('repo_security_events', 'event-1')).toBeNull();
   });
 
   it('validates workspace creation and enforces the workspace limit', async () => {
@@ -327,11 +329,13 @@ describe('backend routes', () => {
       timestamp: '1',
     });
     await setDoc('repo_files', 'file-1', { repoFileId: 'file-1', repoId: 'repo-1', path: 'src/index.ts' });
+    await setDoc('repo_security_events', 'event-1', { eventId: 'event-1', repoId: 'repo-1', title: 'timeout' });
 
     await request(app).delete('/api/repos/repo-1').expect(200);
     expect(await getDoc('repos', 'repo-1')).toBeNull();
     expect(await getDoc('chat_messages', 'message-1')).toBeNull();
     expect(await getDoc('repo_files', 'file-1')).toBeNull();
+    expect(await getDoc('repo_security_events', 'event-1')).toBeNull();
   });
 
   it('requires run confirmation for high-risk or unrunnable repos', async () => {
