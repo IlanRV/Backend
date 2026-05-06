@@ -231,6 +231,7 @@ export interface FunctionDoc {
 
 export interface ChatMessage {
   messageId: string;
+  sessionId: string;
   scopeType: 'repo' | 'workspace';
   scopeId: string;
   conversationId: string;

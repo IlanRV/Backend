@@ -11,6 +11,7 @@ import { ChatConversationSummary, ChatMessage, Repo, Workspace } from '../types'
 const router = Router();
 const logger = createLogger('routes-chat');
 const defaultConversationId = 'default';
+const defaultSessionId = 'anonymous';
 const chatReplyJsonSchema = {
   type: 'object',
   additionalProperties: false,
@@ -33,12 +34,23 @@ function normalizeConversationId(value: unknown): string {
   return trimmed.length > 0 ? trimmed.slice(0, 120) : defaultConversationId;
 }
 
+function extractSessionId(req: { headers: Record<string, unknown> }): string {
+  const raw = req.headers['x-session-id'];
+
+  if (typeof raw !== 'string' || raw.trim().length === 0) {
+    return defaultSessionId;
+  }
+
+  return raw.trim().slice(0, 128);
+}
+
 function messageFromDoc(document: FirebaseFirestore.QueryDocumentSnapshot): ChatMessage {
   const data = document.data() as ChatMessage;
 
   return {
     ...data,
     messageId: document.id,
+    sessionId: data.sessionId || defaultSessionId,
     conversationId: normalizeConversationId(data.conversationId),
   };
 }
@@ -47,22 +59,23 @@ function byTimestamp(left: ChatMessage, right: ChatMessage): number {
   return left.timestamp.localeCompare(right.timestamp);
 }
 
-async function getScopeMessages(scopeType: ChatMessage['scopeType'], scopeId: string): Promise<ChatMessage[]> {
+async function getScopeMessages(scopeType: ChatMessage['scopeType'], scopeId: string, sessionId: string): Promise<ChatMessage[]> {
   const snapshot = await getCollection('chat_messages')
     .where('scopeType', '==', scopeType)
     .where('scopeId', '==', scopeId)
+    .where('sessionId', '==', sessionId)
     .get();
 
   return snapshot.docs.map(messageFromDoc).sort(byTimestamp);
 }
 
-async function getMessages(scopeType: ChatMessage['scopeType'], scopeId: string, conversationId: string): Promise<ChatMessage[]> {
-  const messages = await getScopeMessages(scopeType, scopeId);
+async function getMessages(scopeType: ChatMessage['scopeType'], scopeId: string, sessionId: string, conversationId: string): Promise<ChatMessage[]> {
+  const messages = await getScopeMessages(scopeType, scopeId, sessionId);
   return messages.filter((message) => message.conversationId === conversationId);
 }
 
-async function getLastMessages(scopeType: ChatMessage['scopeType'], scopeId: string, conversationId: string): Promise<ChatMessage[]> {
-  const messages = await getMessages(scopeType, scopeId, conversationId);
+async function getLastMessages(scopeType: ChatMessage['scopeType'], scopeId: string, sessionId: string, conversationId: string): Promise<ChatMessage[]> {
+  const messages = await getMessages(scopeType, scopeId, sessionId, conversationId);
   return messages.slice(-20);
 }
 
@@ -72,10 +85,10 @@ function buildConversationTitle(messages: ChatMessage[]): string {
   return title.length > 48 ? `${title.slice(0, 45)}...` : title;
 }
 
-async function getConversationSummaries(scopeType: ChatMessage['scopeType'], scopeId: string): Promise<ChatConversationSummary[]> {
+async function getConversationSummaries(scopeType: ChatMessage['scopeType'], scopeId: string, sessionId: string): Promise<ChatConversationSummary[]> {
   const groupedMessages = new Map<string, ChatMessage[]>();
 
-  for (const message of await getScopeMessages(scopeType, scopeId)) {
+  for (const message of await getScopeMessages(scopeType, scopeId, sessionId)) {
     const conversationMessages = groupedMessages.get(message.conversationId) ?? [];
     conversationMessages.push(message);
     groupedMessages.set(message.conversationId, conversationMessages);
@@ -103,10 +116,11 @@ async function saveChatMessage(message: Omit<ChatMessage, 'messageId' | 'timesta
   return chatMessage;
 }
 
-async function deleteMessages(scopeType: ChatMessage['scopeType'], scopeId: string, conversationId: string): Promise<number> {
+async function deleteMessages(scopeType: ChatMessage['scopeType'], scopeId: string, sessionId: string, conversationId: string): Promise<number> {
   const snapshot = await getCollection('chat_messages')
     .where('scopeType', '==', scopeType)
     .where('scopeId', '==', scopeId)
+    .where('sessionId', '==', sessionId)
     .get();
   let deletedCount = 0;
 
@@ -209,9 +223,10 @@ router.post(
       throw createHttpError(404, 'Repo not found');
     }
 
+    const sessionId = extractSessionId(req);
     const trimmedMessage = message.trim();
     const conversationId = normalizeConversationId(bodyConversationId);
-    const history = await getLastMessages('repo', repo.repoId, conversationId);
+    const history = await getLastMessages('repo', repo.repoId, sessionId, conversationId);
     const cachedReply = getDuplicateCachedReply(history, trimmedMessage);
 
     if (cachedReply) {
@@ -236,6 +251,7 @@ router.post(
     await saveChatMessage({
       scopeType: 'repo',
       scopeId: repo.repoId,
+      sessionId,
       conversationId,
       role: 'user',
       content: trimmedMessage,
@@ -243,6 +259,7 @@ router.post(
     await saveChatMessage({
       scopeType: 'repo',
       scopeId: repo.repoId,
+      sessionId,
       conversationId,
       role: 'assistant',
       content: reply,
@@ -262,7 +279,8 @@ router.get(
       throw createHttpError(404, 'Repo not found');
     }
 
-    res.json({ conversations: await getConversationSummaries('repo', repo.repoId) });
+    const sessionId = extractSessionId(req);
+    res.json({ conversations: await getConversationSummaries('repo', repo.repoId, sessionId) });
   })
 );
 
@@ -276,8 +294,9 @@ router.get(
       throw createHttpError(404, 'Repo not found');
     }
 
+    const sessionId = extractSessionId(req);
     const conversationId = normalizeConversationId(req.query.conversationId);
-    const messages = await getMessages('repo', repo.repoId, conversationId);
+    const messages = await getMessages('repo', repo.repoId, sessionId, conversationId);
     res.json({ conversationId, messages });
   })
 );
@@ -292,8 +311,9 @@ router.delete(
       throw createHttpError(404, 'Repo not found');
     }
 
+    const sessionId = extractSessionId(req);
     const conversationId = normalizeConversationId(req.query.conversationId);
-    const deletedCount = await deleteMessages('repo', repo.repoId, conversationId);
+    const deletedCount = await deleteMessages('repo', repo.repoId, sessionId, conversationId);
     res.json({ success: true, conversationId, deletedCount });
   })
 );
@@ -321,9 +341,10 @@ router.post(
       ...(document.data() as Repo),
       repoId: document.id,
     })).sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    const sessionId = extractSessionId(req);
     const trimmedMessage = message.trim();
     const conversationId = normalizeConversationId(bodyConversationId);
-    const history = await getLastMessages('workspace', workspace.workspaceId, conversationId);
+    const history = await getLastMessages('workspace', workspace.workspaceId, sessionId, conversationId);
     const cachedReply = getDuplicateCachedReply(history, trimmedMessage);
 
     if (cachedReply) {
@@ -348,6 +369,7 @@ router.post(
     await saveChatMessage({
       scopeType: 'workspace',
       scopeId: workspace.workspaceId,
+      sessionId,
       conversationId,
       role: 'user',
       content: trimmedMessage,
@@ -355,6 +377,7 @@ router.post(
     await saveChatMessage({
       scopeType: 'workspace',
       scopeId: workspace.workspaceId,
+      sessionId,
       conversationId,
       role: 'assistant',
       content: reply,
@@ -374,7 +397,8 @@ router.get(
       throw createHttpError(404, 'Workspace not found');
     }
 
-    res.json({ conversations: await getConversationSummaries('workspace', workspace.workspaceId) });
+    const sessionId = extractSessionId(req);
+    res.json({ conversations: await getConversationSummaries('workspace', workspace.workspaceId, sessionId) });
   })
 );
 
@@ -387,8 +411,9 @@ router.get(
     if (!workspace) {
       throw createHttpError(404, 'Workspace not found');
     }
+    const sessionId = extractSessionId(req);
     const conversationId = normalizeConversationId(req.query.conversationId);
-    const messages = await getMessages('workspace', workspace.workspaceId, conversationId);
+    const messages = await getMessages('workspace', workspace.workspaceId, sessionId, conversationId);
     res.json({ conversationId, messages });
   })
 );
@@ -403,8 +428,9 @@ router.delete(
       throw createHttpError(404, 'Workspace not found');
     }
 
+    const sessionId = extractSessionId(req);
     const conversationId = normalizeConversationId(req.query.conversationId);
-    const deletedCount = await deleteMessages('workspace', workspace.workspaceId, conversationId);
+    const deletedCount = await deleteMessages('workspace', workspace.workspaceId, sessionId, conversationId);
     res.json({ success: true, conversationId, deletedCount });
   })
 );

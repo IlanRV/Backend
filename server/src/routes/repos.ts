@@ -218,6 +218,7 @@ router.get(
       throw createHttpError(404, 'Repo not found');
     }
 
+    res.set('Cache-Control', 'public, max-age=10, stale-while-revalidate=300');
     res.json(toApiRepo(repo));
   })
 );

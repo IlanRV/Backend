@@ -58,6 +58,7 @@ router.get(
       })
     );
 
+    res.set('Cache-Control', 'public, max-age=10, stale-while-revalidate=300');
     res.json(workspaces);
   })
 );
@@ -114,6 +115,7 @@ router.get(
       .get();
     const repos = repoSnapshot.docs.map(repoFromDoc).sort(byCreatedAt);
 
+    res.set('Cache-Control', 'public, max-age=10, stale-while-revalidate=300');
     res.json({
       ...workspace,
       repoCount: repos.length,
